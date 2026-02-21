@@ -31,8 +31,10 @@ def execute_ai_task(pid: str, tid: str):
             f.write(prompt)
         
         # Call Gemini CLI
+        cmd = ["gemini"]
+        print(f"[{tid}] Executing headless command: {' '.join(cmd)} (cwd: {project_dir})")
         result = subprocess.run(
-            ["gemini"],
+            cmd,
             cwd=project_dir,
             capture_output=True,
             text=True,

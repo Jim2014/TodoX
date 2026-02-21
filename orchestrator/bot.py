@@ -118,6 +118,19 @@ async def assign_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_task(pid, task)
     await update.message.reply_text(f"Task {tid} assigned to {role}. Status updated to {task.status}.")
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🤖 *TodoX C&C Bot Commands*\n\n"
+        "/help - Show this help message\n"
+        "/projects - List all projects and their status\n"
+        "/p [PID] - Show details of a specific project\n"
+        "/t [TID] - Show details and recent comments of a task\n"
+        '/new [PID] "[Desc]" - Create a new project\n'
+        '/comment [TID] "[Msg]" - Add a comment to a task\n'
+        "/assign [TID] [Role] - Assign a task (e.g., Admin, AI). Assigning to AI triggers execution."
+    )
+    await update.message.reply_text(help_text)
+
 async def post_init(app: ApplicationBuilder):
     admin_chat_id = os.environ.get("ADMIN_CHAT_ID")
     if admin_chat_id:
@@ -139,6 +152,7 @@ def run_bot():
     app.add_handler(CommandHandler("new", new_command))
     app.add_handler(CommandHandler("comment", comment_command))
     app.add_handler(CommandHandler("assign", assign_command))
+    app.add_handler(CommandHandler("help", help_command))
     
     print("Starting Telegram Bot...")
     app.run_polling()
