@@ -73,6 +73,13 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         seed_prompt = f.read()
         
     create_project(pid, desc, desc, seed_prompt)
+    
+    # Also write GEMINI.md into the new directory
+    from .storage import get_data_dir
+    gemini_md_path = os.path.join(get_data_dir(), "projects", pid, "GEMINI.md")
+    with open(gemini_md_path, "w", encoding="utf-8") as f:
+        f.write(seed_prompt)
+        
     await update.message.reply_text(f"Project {pid} created: {desc}")
 
 async def comment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
