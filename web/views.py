@@ -182,7 +182,7 @@ def read_project(pid: str):
     html += "<div id='tab-info' class='tab-content active'>"
     
     # Edit details block
-    html += "<details open><summary><h3 style='display:inline;'>Edit Project Details</h3></summary>"
+    html += "<details><summary><h3 style='display:inline;'>Edit Project Details</h3></summary>"
     html += "<div style='margin-left:15px; max-width:600px;'>"
     html += f"<input id='edit_title' value='{proj_task.title}' placeholder='Title' style='width:100%; box-sizing:border-box;'><br>"
     html += f"<textarea id='edit_desc' placeholder='Description' style='width:100%; box-sizing:border-box;'>{proj_task.descriptions}</textarea><br>"
@@ -201,7 +201,7 @@ def read_project(pid: str):
     html += "<hr>"
 
     # Tasks block
-    html += "<details open><summary><h3 style='display:inline;'>Create Task</h3></summary>"
+    html += "<details><summary><h3 style='display:inline;'>Create Task</h3></summary>"
     html += "<div style='margin-left:15px; max-width:600px;'>"
     html += "<input id='title' placeholder='Task Title' style='width:100%; box-sizing:border-box;'><br>"
     html += "<textarea id='desc' placeholder='Description' style='width:100%; box-sizing:border-box; min-height:40px;'></textarea><br>"
@@ -224,6 +224,22 @@ def read_project(pid: str):
                 html += f"<div class='card' style='padding:10px; margin-bottom:10px;'><div class='card-content'><b><a href='/task/{pid}/{tid}'>{task.id}</a></b>: {task.title} &nbsp; <span style='font-size:11px;background:#eee;padding:2px 4px;border-radius:3px;'>{task.status}</span> <span style='font-size:11px;color:#777;'>({task.assignee})</span></div>"
                 html += f"<div class='card-actions'><button class='danger' style='padding:4px 8px; font-size:11px;' onclick='if(confirm(\"Delete {tid}?\")) apiCall(\"DELETE\", \"/api/tasks/{pid}/{tid}\")'>Delete</button></div></div>"
     html += "</div></details>" # close Task List block
+
+    html += "<hr>"
+
+    # Comments block
+    html += "<details open><summary><h3 style='display:inline;'>Project Comments & Execution History</h3></summary>"
+    html += "<div style='margin-left:15px; max-width:800px;'>"
+    html += "<h3>Add Entry</h3>"
+    html += "<textarea id='msg' placeholder='Type a message...' style='width:100%; box-sizing:border-box; min-height:80px;'></textarea><br>"
+    html += f"<button style='margin-top:10px;' onclick='apiCall(\"POST\", \"/api/comments/{pid}/{pid}-0\", {{msg: document.getElementById(\"msg\").value}})'>Add Comment</button>"
+    html += "<br><br>"
+    
+    for i, c in enumerate(proj_task.comments):
+        html += f"<div class='card' style='display:block;'><div class='card-content'><p><b>{c.author}</b> <span style='color:#777;font-size:0.8em;'>({c.time})</span>:</p><pre style='background:none; border:1px solid #eee; padding:10px;'>{c.content}</pre></div>"
+        html += f"<div class='card-actions' style='margin-left:0; margin-top:10px;'><button class='danger' onclick='if(confirm(\"Delete comment?\")) apiCall(\"DELETE\", \"/api/comments/{pid}/{pid}-0/{i}\")'>Delete Comment</button></div></div>"
+
+    html += "</div></details>" # close Comments block
     
     html += "</div>" # close tab-info
 
