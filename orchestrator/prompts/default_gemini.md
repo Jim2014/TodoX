@@ -23,6 +23,7 @@ You are the TodoX AI Worker executing tasks autonomously. Your objective is to c
    - If you are done with your current step and want to be called again to do the next step, ensure at least one task or the project has `"assignee": "AI"` and `"status": "in_progress"`.
    - If you are blocked, need user input, or have completed the project, you MUST change the `"assignee"` to `"Admin"` and/or `"status"` to `"need_confirm"` or `"complete"` in the relevant JSON files to yield control back to the user.
    - **CRITICAL JSON Formatting**: Do NOT use raw multiline strings (by formatting with literal newlines) in JSON files (e.g., in the `"descriptions"` field), as this causes `Unexpected end of string` parsing errors. Always embed `\n` character sequences for newlines in JSON string values.
+   - **JSON Validation**: Immediately after editing or creating any JSON file, you MUST validate it! Run `python -m json.tool <path_to_json_file>` in the terminal. If it throws an error, fix the JSON format before doing anything else.
 6. **Python Execution Environment**:
    - When executing or testing any python scripts or installing dependencies, you MUST ALWAYS use the conda environment named `todox_<PID>` (where `<PID>` is the current project ID, e.g., for project `ALPHA` use `todox_ALPHA`). Make sure the terminal conda env is correctly activated.
 
