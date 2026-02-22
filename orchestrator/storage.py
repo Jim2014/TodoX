@@ -20,13 +20,23 @@ def load_projects() -> Dict[str, ProjectSummary]:
         return {}
     with open(projects_file, "r", encoding="utf-8") as f:
         data = json.load(f)
-        return {k: ProjectSummary(**v) for k, v in data.items()}
+        result = {}
+        for k, v in data.items():
+            task = load_task(k, f"{k}-0")
+            if task:
+                v['status'] = task.status
+                v['assignee'] = task.assignee
+            else:
+                v['status'] = v.get('status', 'unknown')
+                v['assignee'] = v.get('assignee', 'unknown')
+            result[k] = ProjectSummary(**v)
+        return result
 
 def save_projects(projects: Dict[str, ProjectSummary]):
     projects_file = get_projects_file()
     os.makedirs(os.path.dirname(projects_file), exist_ok=True)
     with open(projects_file, "w", encoding="utf-8") as f:
-        json.dump({k: v.model_dump() for k, v in projects.items()}, f, indent=4)
+        json.dump({k: v.model_dump(exclude={'status', 'assignee'}) for k, v in projects.items()}, f, indent=4)
 
 def _get_task_path(pid: str, tid: str) -> str:
     data_dir = get_data_dir()
@@ -52,10 +62,9 @@ def save_task(pid: str, task: Task):
     if task.id == f"{pid}-0":
         projects = load_projects()
         if pid in projects:
-            projects[pid].title = task.title
-            projects[pid].status = task.status
-            projects[pid].assignee = task.assignee
-            save_projects(projects)
+            if projects[pid].title != task.title:
+                projects[pid].title = task.title
+                save_projects(projects)
         
 def create_project(pid: str, title: str, descriptions: str, system_prompt: str) -> Task:
     data_dir = get_data_dir()
@@ -125,15 +134,7 @@ def update_project(pid: str, **kwargs) -> Optional[Task]:
     if pid in projects:
         if "title" in kwargs:
             projects[pid].title = kwargs["title"]
-        if "status" in kwargs:
-            projects[pid].status = kwargs["status"]
-        if "assignee" in kwargs:
-            projects[pid].assignee = kwargs["assignee"]
-        if "descriptions" in kwargs:
-            # We don't store descriptions in ProjectSummary, but we should make sure 
-            # if we do in the future, it's addressed. The root task already got it.
-            pass
-        save_projects(projects)
+            save_projects(projects)
         
     return task
 
