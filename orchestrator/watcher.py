@@ -8,6 +8,7 @@ def scan_and_trigger():
     data_dir = get_data_dir()
     projects = load_projects()
     
+    max_wait = 0
     for pid in projects.keys():
         project_dir = os.path.join(data_dir, "projects", pid)
         if not os.path.exists(project_dir):
@@ -30,13 +31,25 @@ def scan_and_trigger():
                         break
                         
         if should_trigger:
-            execute_ai_task(pid)
+            wait_time = execute_ai_task(pid)
+            if wait_time and wait_time > max_wait:
+                max_wait = wait_time
+                
+    return max_wait
 
 def start_watcher(interval_seconds=5):
-    print(f"Starting orchestrator watcher loop (interval: {interval_seconds}s)")
+    print(f"Starting orchestrator watcher loop (default interval: {interval_seconds}s)")
+    current_interval = interval_seconds
     while True:
         try:
-            scan_and_trigger()
+            wait_override = scan_and_trigger()
+            if wait_override > 0:
+                print(f"Watcher received rate limit/override. Backing off for {wait_override}s.")
+                current_interval = wait_override
+            else:
+                # Reset to default if no overrides
+                current_interval = interval_seconds
         except Exception as e:
             print(f"Watcher error: {e}")
-        time.sleep(interval_seconds)
+            
+        time.sleep(current_interval)
