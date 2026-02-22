@@ -48,6 +48,15 @@ def save_task(pid: str, task: Task):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(task.model_dump(), f, indent=4)
         
+    # Automatically sync root task changes up to the global projects.json
+    if task.id == f"{pid}-0":
+        projects = load_projects()
+        if pid in projects:
+            projects[pid].title = task.title
+            projects[pid].status = task.status
+            projects[pid].assignee = task.assignee
+            save_projects(projects)
+        
 def create_project(pid: str, title: str, descriptions: str, system_prompt: str) -> Task:
     data_dir = get_data_dir()
     project_dir = os.path.join(data_dir, "projects", pid)
