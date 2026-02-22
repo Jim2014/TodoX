@@ -1,4 +1,5 @@
 import os
+import markdown
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from orchestrator.storage import (
@@ -244,6 +245,27 @@ def get_project_file(pid: str, path: str):
     file_path = os.path.join(project_dir, path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+        
+    if file_path.endswith(".md"):
+        with open(file_path, "r", encoding="utf-8") as f:
+            md_content = f.read()
+        html_content = markdown.markdown(md_content, extensions=['fenced_code', 'tables'])
+        # Add a bit of styling for the rendered markdown so it looks nice in the iframe
+        full_html = f"""
+        <html><head><style>
+            body {{ font-family: sans-serif; padding: 20px; line-height: 1.6; color: #333; }}
+            pre {{ background: #f4f6f8; padding: 10px; border-radius: 4px; overflow-x: auto; }}
+            code {{ background: #f4f6f8; padding: 2px 4px; border-radius: 3px; font-family: monospace; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f8f9fa; }}
+            blockquote {{ border-left: 4px solid #ccc; margin-left: 0; padding-left: 16px; color: #666; }}
+        </style></head><body>
+        {html_content}
+        </body></html>
+        """
+        return HTMLResponse(content=full_html)
+        
     return FileResponse(file_path)
 
 @router.get("/task/{pid}/{tid}", response_class=HTMLResponse)
