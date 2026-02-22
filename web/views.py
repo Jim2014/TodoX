@@ -110,6 +110,10 @@ def generate_file_tree(root_dir, pid, current_path=""):
 def read_root():
     projects = load_projects()
     html = f"<html><head><title>TodoX Panel</title>{HTML_STYLE}</head><body><div class='container'>"
+    
+    # Navigation Breadcrumb
+    html += f"<p style='font-size:14px; margin-bottom: 20px;'>Home</p>"
+    
     html += "<h1>TodoX Project Dashboard</h1>"
     
     html += "<h3>Create Project</h3>"
@@ -140,6 +144,9 @@ def read_project(pid: str):
     html = f"<html><head><title>Project {pid}</title>{HTML_STYLE}</head><body>"
     html += "<div class='layout-container'><div class='sidebar'>"
     
+    # Navigation Breadcrumb
+    html += f"<p style='font-size:14px; margin-bottom: 20px;'><a href='/'>Home</a> / {pid}</p>"
+    
     # LEFT PANE: Project Info and File Tree
     html += f"<h2>Project: {pid}</h2>"
     html += f"<p><b>Title:</b> {proj_task.title}</p>"
@@ -148,15 +155,17 @@ def read_project(pid: str):
     html += f"<details><summary style='font-size:14px;color:#555;'><b>Description</b></summary><p style='font-size:14px;color:#555;margin-left:15px;'>{proj_task.descriptions}</p></details>"
     
     html += "<div class='tree-root'>"
-    html += f"<h3>&#128193; {pid} Workspace</h3>"
-    files_dir = os.path.join(get_data_dir(), "projects", pid, "files")
-    if os.path.exists(files_dir):
-        html += generate_file_tree(files_dir, pid)
+    html += f"<h3>&#128193; {pid}</h3>"
+    
+    project_dir = os.path.join(get_data_dir(), "projects", pid)
+    
+    if os.path.exists(project_dir):
+        html += generate_file_tree(project_dir, pid)
     else:
-        html += "<p style='font-size:12px;color:#999;'>No files available.</p>"
+        html += f"<p style='font-size:12px;color:#999;'>No project folder found.</p>"
     html += "</div>" # close tree-root
     
-    html += "<hr><p><a href='/'>&larr; Back to Dashboard</a></p>"
+    
     html += "</div>" # close sidebar
     
     # RIGHT PANE: Details and Subtasks + File Viewer
@@ -231,7 +240,8 @@ def read_project(pid: str):
 @router.get("/project/{pid}/files/{path:path}")
 def get_project_file(pid: str, path: str):
     pid = pid.upper()
-    file_path = os.path.join(get_data_dir(), "projects", pid, "files", path)
+    project_dir = os.path.join(get_data_dir(), "projects", pid)
+    file_path = os.path.join(project_dir, path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path)
@@ -245,6 +255,10 @@ def read_task(pid: str, tid: str):
         raise HTTPException(status_code=404, detail="Task not found")
 
     html = f"<html><head><title>Task {tid}</title>{HTML_STYLE}</head><body><div class='container'>"
+    
+    # Navigation Breadcrumb
+    html += f"<p style='font-size:14px; margin-bottom: 20px;'><a href='/'>Home</a> / <a href='/project/{pid}'>{pid}</a> / {tid}</p>"
+    
     html += f"<h1>Task: {tid}</h1>"
     html += f"<p><b>Project ID:</b> <a href='/project/{pid}'>{pid}</a></p>"
     html += f"<p><b>Parent ID:</b> {task.parent_id}</p>"
@@ -279,6 +293,5 @@ def read_task(pid: str, tid: str):
         html += f"<div class='card' style='display:block;'><div class='card-content'><p><b>{c.author}</b> <span style='color:#777;font-size:0.8em;'>({c.time})</span>:</p><pre>{c.content}</pre></div>"
         html += f"<div class='card-actions' style='margin-left:0; margin-top:10px;'><button class='danger' onclick='if(confirm(\"Delete comment?\")) apiCall(\"DELETE\", \"/api/comments/{pid}/{tid}/{i}\")'>Delete Comment</button></div></div>"
 
-    html += f"<hr><p><a href='/project/{pid}'>&larr; Back to Project {pid}</a></p>"
     html += "</div></body></html>"
     return html
