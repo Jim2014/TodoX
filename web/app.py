@@ -165,11 +165,12 @@ def read_root():
     html += "<h1>TodoX Project Dashboard</h1>"
     
     html += "<h3>Create Project</h3>"
-    html += "<input id='pid' placeholder='PID (e.g. ALPHA)'><br>"
-    html += "<input id='title' placeholder='Title'><br>"
-    html += "<input id='desc' placeholder='Description'><br>"
-    html += "<button onclick='apiCall(\"POST\", \"/api/projects\", {pid: document.getElementById(\"pid\").value, title: document.getElementById(\"title\").value, desc: document.getElementById(\"desc\").value})'>Create Project</button>"
-    html += "<hr>"
+    html += "<div style='display:flex; flex-direction:column; gap:10px; max-width: 600px;'>"
+    html += "<input id='pid' placeholder='PID (e.g. ALPHA)' style='width:100%; box-sizing:border-box;'>"
+    html += "<input id='title' placeholder='Title' style='width:100%; box-sizing:border-box;'>"
+    html += "<textarea id='desc' placeholder='Description' rows='4' style='width:100%; box-sizing:border-box;'></textarea>"
+    html += "<button onclick='apiCall(\"POST\", \"/api/projects\", {pid: document.getElementById(\"pid\").value, title: document.getElementById(\"title\").value, desc: document.getElementById(\"desc\").value})' style='align-self:flex-start;'>Create Project</button>"
+    html += "</div><hr>"
 
     if not projects:
         html += "<p>No projects found.</p>"
