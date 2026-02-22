@@ -53,9 +53,9 @@ def test_full_lifecycle():
     loaded_subtask.status = "in_progress"
     save_task(pid, loaded_subtask)
     
-    # 4. Trigger Worker Manually
+    # 4. Trigger AI Worker (mocked out via gemini CLI)
     print("4. Triggering AI worker...")
-    execute_ai_task(pid, task_id)
+    execute_ai_task(pid)
     
     # 5. Verify task completion
     print("5. Verifying completion state...")
