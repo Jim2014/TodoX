@@ -1,5 +1,6 @@
 import os
 import subprocess
+import shutil
 from datetime import datetime
 from .storage import load_task, save_task, get_data_dir
 from .models import Comment
@@ -29,7 +30,11 @@ def execute_ai_task(pid: str):
             f.write(prompt)
         
         # Call Gemini CLI
-        cmd = ["gemini", "-y", "--model", current_model, "-p", '"plan and execute the project.json"']
+        gemini_exec = shutil.which("gemini")
+        if not gemini_exec:
+            raise RuntimeError("gemini executable not found in PATH")
+            
+        cmd = [gemini_exec, "-y", "--model", current_model, "-p", '"plan and execute the project.json"']
         print(f"[{pid}] Executing headless command: {' '.join(cmd)} (cwd: {project_dir})")
         
         env = os.environ.copy()
