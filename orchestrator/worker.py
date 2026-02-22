@@ -57,24 +57,77 @@ def execute_ai_task(pid: str):
             # Status management is deferred to the AI's file I/O operations directly.
         else:
             print(f"[{pid}] AI Worker execution failed with code {returncode}.")
-            # Log failure defensively and disable infinite loop
-            task.status = "failed"
-            task.assignee = "Admin"
-            task.comments.append(Comment(
-                author="System",
-                time=datetime.now().isoformat(),
-                content=f"Execution Failed with code {result.returncode}.\nOutput:\n{summary}"
-            ))
-            save_task(pid, task)
+            error_msg = f"Execution Failed with code {returncode}."
+            fail_active_tasks(pid, error_msg, summary_lines)
             
     except Exception as e:
         print(f"[{pid}] AI Worker failed (CLI invocation error): {e}")
-        task.status = "failed"
-        task.assignee = "Admin"
-        task.comments.append(Comment(
+        error_msg = f"Execution System Error: {e}"
+        fail_active_tasks(pid, error_msg, [])
+
+def fail_active_tasks(pid: str, error_msg: str, summary_lines: list):
+    tasks_to_fail = []
+    
+    root_task = load_task(pid, f"{pid}-0")
+    if root_task and root_task.assignee == "AI" and root_task.status == "in_progress":
+        tasks_to_fail.append(root_task)
+        
+    tasks_dir = os.path.join(get_data_dir(), "projects", pid, "tasks")
+    if os.path.exists(tasks_dir):
+        for tid in os.listdir(tasks_dir):
+            if tid == ".DS_Store": continue
+            task = load_task(pid, tid)
+            if task and task.assignee == "AI" and task.status == "in_progress":
+                tasks_to_fail.append(task)
+                
+    if not tasks_to_fail and root_task:
+        tasks_to_fail.append(root_task)
+        
+    comment_content = error_msg
+    if summary_lines:
+        last_100 = "".join(summary_lines[-100:])
+        comment_content += f"\n\nOutput Log:\n{last_100}"
+        
+    for t in tasks_to_fail:
+        t.status = "failed"
+        t.assignee = "Admin"
+        t.comments.append(Comment(
             author="System",
             time=datetime.now().isoformat(),
-            content=f"Execution System Error: {e}"
+            content=comment_content
         ))
-        save_task(pid, task)
+        save_task(pid, t)
+        
+    tg_token = os.environ.get("TG_TOKEN")
+    admin_chat_id = os.environ.get("ADMIN_CHAT_ID")
+    if tg_token and admin_chat_id:
+        try:
+            import httpx
+            import html
+            import tempfile
+            
+            msg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+            failed_tids = ", ".join(t.id for t in tasks_to_fail)
+            httpx.post(msg_url, json={
+                "chat_id": admin_chat_id,
+                "text": f"🚨 [TodoX] Project {pid} Execution Failed!\nTasks affected: {failed_tids}\nError: {error_msg}"
+            }, timeout=10.0)
+            
+            if summary_lines:
+                last_100 = summary_lines[-100:]
+                html_log = f"<html><body style='background:#1e1e1e;color:#d4d4d4;padding:10px;'><pre>{html.escape(''.join(last_100))}</pre></body></html>"
+                
+                doc_url = f"https://api.telegram.org/bot{tg_token}/sendDocument"
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as tmp:
+                    tmp.write(html_log)
+                    tmp_path = tmp.name
+                    
+                with open(tmp_path, "rb") as f:
+                    files = {"document": (f"{pid}_error_log.html", f, "text/html")}
+                    data = {"chat_id": admin_chat_id, "caption": f"Last {len(last_100)} lines of output log"}
+                    httpx.post(doc_url, data=data, files=files, timeout=10.0)
+                    
+                os.remove(tmp_path)
+        except Exception as e:
+            print(f"[{pid}] Failed to send Telegram alert: {e}")
 
