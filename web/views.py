@@ -57,9 +57,29 @@ function switchTab(tabId) {
     document.getElementById(tabId).classList.add('active');
     // Activate selected tab button
     document.getElementById('btn-' + tabId).classList.add('active');
+    
+    // Store active tab
+    sessionStorage.setItem('activeTab_' + window.location.pathname, tabId);
 }
 
-function showFileViewer() {
+window.addEventListener('DOMContentLoaded', () => {
+    const savedTab = sessionStorage.getItem('activeTab_' + window.location.pathname);
+    if (savedTab && document.getElementById(savedTab)) {
+        if (savedTab === 'tab-viewer') {
+            const savedFile = sessionStorage.getItem('activeFile_' + window.location.pathname);
+            if (savedFile) {
+                const iframe = document.querySelector('iframe[name="file_viewer"]');
+                if (iframe) iframe.src = savedFile;
+            }
+        }
+        switchTab(savedTab);
+    }
+});
+
+function showFileViewer(url = null) {
+    if (url) {
+        sessionStorage.setItem('activeFile_' + window.location.pathname, url);
+    }
     switchTab('tab-viewer');
 }
 async function apiCall(method, url, body=null) {
@@ -80,6 +100,23 @@ async function apiCall(method, url, body=null) {
         alert("Request failed: " + e);
     }
 }
+
+// Auto-refresh every 10 seconds
+let refreshTimeout;
+function scheduleRefresh() {
+    clearTimeout(refreshTimeout);
+    refreshTimeout = setTimeout(() => {
+        const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+        if (['input', 'textarea', 'select'].includes(activeTag)) {
+            // Delay refresh if user is interacting with an input
+            scheduleRefresh();
+        } else {
+            window.location.reload();
+        }
+    }, 10000);
+}
+window.addEventListener('load', scheduleRefresh);
+document.addEventListener('click', scheduleRefresh);
 </script>
 """
 
@@ -103,7 +140,7 @@ def generate_file_tree(root_dir, pid, current_path=""):
     for f in files:
         rel_path = os.path.join(current_path, f) if current_path else f
         url = f"/project/{pid}/files/{rel_path}"
-        html += f"<a href='{url}' target='file_viewer' class='file-link' onclick='showFileViewer()'>&#128196; {f}</a>"
+        html += f"<a href='{url}' target='file_viewer' class='file-link' onclick=\"showFileViewer('{url}')\">&#128196; {f}</a>"
         
     return html
 
