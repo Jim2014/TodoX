@@ -12,17 +12,11 @@ TodoX is an AI-driven project management and development system based on a flat 
 
 This project mandates the use of Conda for environment management and requires the `gemini` CLI tool for AI operations.
 
-1. Create and activate the conda environment:
+1. Create and activate the conda environment using `environment.yml`:
    ```bash
-   conda create -y -n todox python=3.11
+   conda env create -f environment.yml
    conda activate todox
    ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
 3. Ensure Gemini CLI is installed and accessible in your system's PATH. The orchestrator calls the headless `gemini` executable directly.
 
 4. Configure Environment Variables:
