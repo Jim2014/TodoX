@@ -3,7 +3,7 @@ import sys
 import multiprocessing
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -114,7 +114,14 @@ def api_update_comment(pid: str, tid: str, index: int, data: CommentUpdate):
 # --- HTML Views ---
 HTML_STYLE = """
 <style>
-body { font-family: sans-serif; max-width: 800px; margin: 40px auto; }
+body { font-family: sans-serif; margin: 0; padding: 20px; background: #fff; }
+.container { max-width: 800px; margin: 0 auto; }
+.layout-container { display: flex; min-height: 90vh; max-width: 1400px; margin: 0 auto; gap: 20px; }
+.sidebar { width: 400px; border-right: 1px solid #eee; padding-right: 20px; overflow-y: auto; }
+.main-pane { flex: 1; display: flex; flex-direction: column; }
+.iframe-container { flex: 1; min-height: 80vh; border: 1px solid #ccc; width: 100%; border-radius: 4px; }
+.file-link { display: block; margin: 5px 0; padding: 8px; background: #f8f9fa; border-radius: 4px; cursor: pointer; text-decoration: none; color: #333; border: 1px solid #eee; }
+.file-link:hover { background: #e2e6ea; border-color: #dae0e5; }
 .card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 5px; background: #fafafa; display: flex; justify-content: space-between; align-items: center; }
 .card-content { flex: 1; }
 .card-actions { margin-left: 20px; }
@@ -154,7 +161,7 @@ async function apiCall(method, url, body=null) {
 @app.get("/", response_class=HTMLResponse)
 def read_root():
     projects = load_projects()
-    html = f"<html><head><title>TodoX Panel</title>{HTML_STYLE}</head><body>"
+    html = f"<html><head><title>TodoX Panel</title>{HTML_STYLE}</head><body><div class='container'>"
     html += "<h1>TodoX Project Dashboard</h1>"
     
     html += "<h3>Create Project</h3>"
@@ -171,7 +178,7 @@ def read_root():
             html += f"<div class='card'><div class='card-content'><b><a href='/project/{pid}'>{pid}</a></b>: {proj.title} <br><small>[{proj.status}] - Assignee: {proj.assignee}</small></div>"
             html += f"<div class='card-actions'><button class='danger' onclick='if(confirm(\"Delete {pid} and all its tasks?\")) apiCall(\"DELETE\", \"/api/projects/{pid}\")'>Delete</button></div></div>"
             
-    html += "</body></html>"
+    html += "</div></body></html>"
     return html
 
 @app.get("/project/{pid}", response_class=HTMLResponse)
@@ -182,6 +189,8 @@ def read_project(pid: str):
         raise HTTPException(status_code=404, detail="Project not found")
         
     html = f"<html><head><title>Project {pid}</title>{HTML_STYLE}</head><body>"
+    html += "<div class='layout-container'><div class='sidebar'>"
+    
     html += f"<h1>Project: {pid}</h1>"
     html += f"<p><b>Title:</b> {proj_task.title}</p>"
     html += f"<p><b>Status:</b> {proj_task.status}</p>"
@@ -217,12 +226,36 @@ def read_project(pid: str):
         for tid in task_ids:
             task = load_task(pid, tid)
             if task:
-                html += f"<div class='card'><div class='card-content'><b><a href='/task/{pid}/{tid}'>{task.id}</a></b>: {task.title} <br><small>[{task.status}] - Assignee: {task.assignee}</small></div>"
-                html += f"<div class='card-actions'><button class='danger' onclick='if(confirm(\"Delete {tid}?\")) apiCall(\"DELETE\", \"/api/tasks/{pid}/{tid}\")'>Delete</button></div></div>"
+                html += f"<div class='card' style='display:block;'><div class='card-content'><b><a href='/task/{pid}/{tid}'>{task.id}</a></b>: {task.title} <br><small>[{task.status}] - Assignee: {task.assignee}</small></div>"
+                html += f"<div class='card-actions' style='margin-top:10px;'><button class='danger' onclick='if(confirm(\"Delete {tid}?\")) apiCall(\"DELETE\", \"/api/tasks/{pid}/{tid}\")'>Delete</button></div></div>"
     
+    html += "<hr><h2>Project Files</h2>"
+    files_dir = os.path.join(get_data_dir(), "projects", pid, "files")
+    if os.path.exists(files_dir):
+        for root, _, files in os.walk(files_dir):
+            for f in files:
+                rel_path = os.path.relpath(os.path.join(root, f), files_dir)
+                url = f"/project/{pid}/files/{rel_path}"
+                html += f"<a href='{url}' target='file_viewer' class='file-link'>&#128196; {rel_path}</a>"
+                
     html += "<hr><p><a href='/'>&larr; Back to Dashboard</a></p>"
-    html += "</body></html>"
+    html += "</div>" # close sidebar
+    
+    html += "<div class='main-pane'>"
+    html += "<h2>File Viewer</h2>"
+    html += "<iframe name='file_viewer' class='iframe-container' src='about:blank'></iframe>"
+    html += "</div>" # close main-pane
+    
+    html += "</div></body></html>"
     return html
+
+@app.get("/project/{pid}/files/{path:path}")
+def get_project_file(pid: str, path: str):
+    pid = pid.upper()
+    file_path = os.path.join(get_data_dir(), "projects", pid, "files", path)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)
 
 @app.get("/task/{pid}/{tid}", response_class=HTMLResponse)
 def read_task(pid: str, tid: str):
@@ -232,7 +265,7 @@ def read_task(pid: str, tid: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    html = f"<html><head><title>Task {tid}</title>{HTML_STYLE}</head><body>"
+    html = f"<html><head><title>Task {tid}</title>{HTML_STYLE}</head><body><div class='container'>"
     html += f"<h1>Task: {tid}</h1>"
     html += f"<p><b>Project ID:</b> <a href='/project/{pid}'>{pid}</a></p>"
     html += f"<p><b>Parent ID:</b> {task.parent_id}</p>"
@@ -268,7 +301,7 @@ def read_task(pid: str, tid: str):
         html += f"<div class='card-actions' style='margin-left:0; margin-top:10px;'><button class='danger' onclick='if(confirm(\"Delete comment?\")) apiCall(\"DELETE\", \"/api/comments/{pid}/{tid}/{i}\")'>Delete Comment</button></div></div>"
 
     html += f"<hr><p><a href='/project/{pid}'>&larr; Back to Project {pid}</a></p>"
-    html += "</body></html>"
+    html += "</div></body></html>"
     return html
 
 def run_web_process():
