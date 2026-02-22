@@ -27,25 +27,36 @@ def execute_ai_task(pid: str):
             f.write(prompt)
         
         # Call Gemini CLI
-        cmd = ["gemini"]
+        cmd = ["gemini", "-y", "-p", "plan and execute the project.json"]
         print(f"[{pid}] Executing headless command: {' '.join(cmd)} (cwd: {project_dir})")
-        result = subprocess.run(
+        
+        env = os.environ.copy()
+        
+        process = subprocess.Popen(
             cmd,
             cwd=project_dir,
-            capture_output=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout
             text=True,
-            check=False
+            bufsize=1  # Line buffered
         )
         
-        summary = result.stdout.strip()
-        if result.stderr:
-            summary += f"\n\nErrors/Warnings:\n{result.stderr.strip()}"
+        summary_lines = []
+        for line in iter(process.stdout.readline, ''):
+            print(f"[{pid} | gemini] {line}", end='')
+            summary_lines.append(line)
+            
+        process.stdout.close()
+        returncode = process.wait()
         
-        if result.returncode == 0:
+        summary = "".join(summary_lines).strip()
+        
+        if returncode == 0:
             print(f"[{pid}] AI Worker execution step finished successfully.")
             # Status management is deferred to the AI's file I/O operations directly.
         else:
-            print(f"[{pid}] AI Worker execution failed with code {result.returncode}.")
+            print(f"[{pid}] AI Worker execution failed with code {returncode}.")
             # Log failure defensively and disable infinite loop
             task.status = "failed"
             task.assignee = "Admin"
