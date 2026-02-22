@@ -1,12 +1,24 @@
 import os
 import json
 import shutil
+import tempfile
 from datetime import datetime
 from typing import Dict, Optional, Any
 from dotenv import load_dotenv
 from .models import Task, ProjectSummary, Comment
 
 load_dotenv()
+
+def _atomic_write_json(path: str, data: Any):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        os.replace(temp_path, path)
+    except Exception:
+        os.unlink(temp_path)
+        raise
 
 def get_data_dir() -> str:
     return os.environ.get("DATA_DIR", "./data")
@@ -34,9 +46,7 @@ def load_projects() -> Dict[str, ProjectSummary]:
 
 def save_projects(projects: Dict[str, ProjectSummary]):
     projects_file = get_projects_file()
-    os.makedirs(os.path.dirname(projects_file), exist_ok=True)
-    with open(projects_file, "w", encoding="utf-8") as f:
-        json.dump({k: v.model_dump(exclude={'status', 'assignee'}) for k, v in projects.items()}, f, indent=4)
+    _atomic_write_json(projects_file, {k: v.model_dump(exclude={'status', 'assignee'}) for k, v in projects.items()})
 
 def _get_task_path(pid: str, tid: str) -> str:
     data_dir = get_data_dir()
@@ -54,9 +64,7 @@ def load_task(pid: str, tid: str) -> Optional[Task]:
 
 def save_task(pid: str, task: Task):
     path = _get_task_path(pid, task.id)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(task.model_dump(), f, indent=4)
+    _atomic_write_json(path, task.model_dump())
         
     # Automatically sync root task changes up to the global projects.json
     if task.id == f"{pid}-0":

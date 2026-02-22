@@ -76,3 +76,8 @@ def api_update_comment(pid: str, tid: str, index: int, data: CommentUpdate):
     if update_comment(pid.upper(), tid.upper(), index, data.msg):
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="Not found")
+
+from orchestrator.state import state
+@router.get("/api/system_state")
+def api_system_state():
+    return state.get_state()

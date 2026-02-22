@@ -3,6 +3,7 @@ import subprocess
 from datetime import datetime
 from .storage import load_task, save_task, get_data_dir
 from .models import Comment
+from .state import state
 
 def execute_ai_task(pid: str):
     task = load_task(pid, f"{pid}-0")
@@ -10,7 +11,8 @@ def execute_ai_task(pid: str):
         return
         
     try:
-        print(f"[{pid}] Starting AI Worker execution using Gemini CLI.")
+        current_model = state.get_current_model()
+        print(f"[{pid}] Starting AI Worker execution using Gemini CLI (Model: {current_model}).")
         
         project_dir = os.path.join(get_data_dir(), "projects", pid)
         system_prompt_path = os.path.join(project_dir, "system_prompt.md")
@@ -27,7 +29,7 @@ def execute_ai_task(pid: str):
             f.write(prompt)
         
         # Call Gemini CLI
-        cmd = ["gemini", "-y", "-p", "plan and execute the project.json"]
+        cmd = ["gemini", "-y", "--model", current_model, "-p", '"plan and execute the project.json"']
         print(f"[{pid}] Executing headless command: {' '.join(cmd)} (cwd: {project_dir})")
         
         env = os.environ.copy()
@@ -54,25 +56,29 @@ def execute_ai_task(pid: str):
         
         if returncode == 0:
             print(f"[{pid}] AI Worker execution step finished successfully.")
-            return 0
-            # Status management is deferred to the AI's file I/O operations directly.
+            state.reset_success()
+            return
         else:
             print(f"[{pid}] AI Worker execution failed with code {returncode}.")
             error_msg = f"Execution Failed with code {returncode}."
             
             if "429" in error_msg or any("429" in line for line in summary_lines):
-                print(f"[{pid}] Rate limit 429 detected. Backing off for 10 minutes.")
-                send_telegram_alert(pid, "⏳ [TodoX] Rate Limit 429 hit. Pausing AI Worker for 10 minutes.", summary_lines)
-                return 600
+                is_backoff = state.handle_429()
+                if is_backoff:
+                    print(f"[{pid}] Rate limit 429 detected on last model fallback. Backing off for 10 minutes.")
+                    send_telegram_alert(pid, "⏳ [TodoX] Rate Limit 429 hit on all fallback models. Pausing AI Worker for 10 minutes.", summary_lines)
+                else:
+                    new_model = state.get_current_model()
+                    print(f"[{pid}] Rate limit 429 detected. Switching to fallback model: {new_model}")
+                    send_telegram_alert(pid, f"⚠️ [TodoX] Rate Limit 429 hit on {current_model}. Switching fallback model to {new_model}.", summary_lines)
+                return
                 
             fail_active_tasks(pid, error_msg, summary_lines)
-            return 0
             
     except Exception as e:
         print(f"[{pid}] AI Worker failed (CLI invocation error): {e}")
         error_msg = f"Execution System Error: {e}"
         fail_active_tasks(pid, error_msg, [])
-        return 0
 
 def send_telegram_alert(pid: str, text: str, summary_lines: list):
     tg_token = os.environ.get("TG_TOKEN")

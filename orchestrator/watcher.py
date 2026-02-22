@@ -3,12 +3,12 @@ import time
 import asyncio
 from .storage import get_data_dir, load_projects, load_task
 from .worker import execute_ai_task
+from .state import state
 
 def scan_and_trigger():
     data_dir = get_data_dir()
     projects = load_projects()
     
-    max_wait = 0
     for pid in projects.keys():
         project_dir = os.path.join(data_dir, "projects", pid)
         if not os.path.exists(project_dir):
@@ -31,25 +31,14 @@ def scan_and_trigger():
                         break
                         
         if should_trigger:
-            wait_time = execute_ai_task(pid)
-            if wait_time and wait_time > max_wait:
-                max_wait = wait_time
-                
-    return max_wait
+            execute_ai_task(pid)
 
-def start_watcher(interval_seconds=5):
-    print(f"Starting orchestrator watcher loop (default interval: {interval_seconds}s)")
-    current_interval = interval_seconds
+def start_watcher():
+    print(f"Starting orchestrator watcher loop")
     while True:
         try:
-            wait_override = scan_and_trigger()
-            if wait_override > 0:
-                print(f"Watcher received rate limit/override. Backing off for {wait_override}s.")
-                current_interval = wait_override
-            else:
-                # Reset to default if no overrides
-                current_interval = interval_seconds
+            scan_and_trigger()
         except Exception as e:
             print(f"Watcher error: {e}")
             
-        time.sleep(current_interval)
+        time.sleep(state.get_interval())

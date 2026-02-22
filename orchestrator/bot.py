@@ -143,7 +143,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '/comment [TID] "[Msg]" - Add a comment to a task\n'
         '/delc [TID] [Index] - Delete a comment\n'
         '/updc [TID] [Index] "[Msg]" - Update a comment\n'
-        "/assign [TID] [Role] - Assign a task (e.g., Admin, AI). Assigning to AI triggers execution."
+        "/assign [TID] [Role] - Assign a task (e.g., Admin, AI). Assigning to AI triggers execution.\n"
+        "/sys - Show system state and available models\n"
+        "/upmodel [Index] - Update the AI worker model"
     )
     await update.message.reply_text(help_text)
 
@@ -257,6 +259,42 @@ async def post_init(app: ApplicationBuilder):
         except Exception as e:
             print(f"Failed to send startup message: {e}")
 
+from .state import state
+
+async def sys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current = state.get_state()
+    models = state.get_all_models()
+    
+    models_list = "\n".join([
+        f"{'✅' if i == current['model_index'] else '⬜️'} [{i}] {m}" 
+        for i, m in enumerate(models)
+    ])
+    
+    text = (
+        "⚙️ *System State*\n\n"
+        f"🤖 Current Model: `{current['current_model']}` (Index: {current['model_index']})\n"
+        f"⏱️ Watcher Interval: `{current['interval_seconds']}s`\n\n"
+        "📋 *Available Models:*\n"
+        f"{models_list}"
+    )
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def upmodel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /upmodel [Index]")
+        return
+        
+    try:
+        idx = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Index must be an integer.")
+        return
+        
+    if state.set_model_index(idx):
+        await update.message.reply_text(f"Model successfully updated to index {idx} ({state.get_current_model()}).")
+    else:
+        await update.message.reply_text(f"Invalid index. Must be between 0 and {len(state.get_all_models()) - 1}.")
+
 def run_bot():
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "your_telegram_bot_token_here":
         print("Telegram token not set. Bot will not function correctly. Exiting bot loop.")
@@ -270,6 +308,8 @@ def run_bot():
     app.add_handler(CommandHandler("comment", comment_command))
     app.add_handler(CommandHandler("assign", assign_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("sys", sys_command))
+    app.add_handler(CommandHandler("upmodel", upmodel_command))
     
     app.add_handler(CommandHandler("delp", delp_command))
     app.add_handler(CommandHandler("updp", updp_command))
