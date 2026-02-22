@@ -120,6 +120,10 @@ def update_project(pid: str, **kwargs) -> Optional[Task]:
             projects[pid].status = kwargs["status"]
         if "assignee" in kwargs:
             projects[pid].assignee = kwargs["assignee"]
+        if "descriptions" in kwargs:
+            # We don't store descriptions in ProjectSummary, but we should make sure 
+            # if we do in the future, it's addressed. The root task already got it.
+            pass
         save_projects(projects)
         
     return task

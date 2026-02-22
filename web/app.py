@@ -28,6 +28,7 @@ class ProjectUpdate(BaseModel):
     title: Optional[str] = None
     status: Optional[str] = None
     assignee: Optional[str] = None
+    descriptions: Optional[str] = None
 
 class TaskCreate(BaseModel):
     title: str
@@ -187,13 +188,19 @@ def read_project(pid: str):
     html += f"<p><b>Assignee:</b> {proj_task.assignee}</p>"
     html += f"<p><b>Description:</b> {proj_task.descriptions}</p>"
     
-    html += "<h3>Edit Project Status</h3>"
+    html += "<h3>Edit Project Details</h3>"
+    html += f"<input id='edit_title' value='{proj_task.title}' placeholder='Title'><br>"
+    html += f"<textarea id='edit_desc' placeholder='Description'>{proj_task.descriptions}</textarea><br>"
     html += f"<select id='status'> \
         <option value='in_progress' {'selected' if proj_task.status=='in_progress' else ''}>in_progress</option> \
         <option value='complete' {'selected' if proj_task.status=='complete' else ''}>complete</option> \
         <option value='failed' {'selected' if proj_task.status=='failed' else ''}>failed</option> \
-        </select>"
-    html += f" <button onclick='apiCall(\"PUT\", \"/api/projects/{pid}\", {{status: document.getElementById(\"status\").value}})'>Update</button>"
+        </select><br>"
+    html += f"<select id='edit_assignee'> \
+        <option value='Admin' {'selected' if proj_task.assignee=='Admin' else ''}>Admin</option> \
+        <option value='AI' {'selected' if proj_task.assignee=='AI' else ''}>AI</option> \
+        </select><br>"
+    html += f" <button onclick='apiCall(\"PUT\", \"/api/projects/{pid}\", {{title: document.getElementById(\"edit_title\").value, descriptions: document.getElementById(\"edit_desc\").value, status: document.getElementById(\"status\").value, assignee: document.getElementById(\"edit_assignee\").value}})'>Update Details</button>"
     
     html += "<hr><h2>Subtasks</h2>"
     
@@ -234,19 +241,21 @@ def read_task(pid: str, tid: str):
     html += f"<p><b>Assignee:</b> {task.assignee}</p>"
     html += f"<p><b>Description:</b> {task.descriptions}</p>"
     
-    html += "<h3>Edit Task Routing</h3>"
+    html += "<h3>Edit Task Details</h3>"
+    html += f"<input id='edit_title' value='{task.title}' placeholder='Title'><br>"
+    html += f"<textarea id='edit_desc' placeholder='Description'>{task.descriptions}</textarea><br>"
     html += f"<select id='status'> \
         <option value='not_started' {'selected' if task.status=='not_started' else ''}>not_started</option> \
         <option value='in_progress' {'selected' if task.status=='in_progress' else ''}>in_progress</option> \
         <option value='need_confirm' {'selected' if task.status=='need_confirm' else ''}>need_confirm</option> \
         <option value='complete' {'selected' if task.status=='complete' else ''}>complete</option> \
         <option value='failed' {'selected' if task.status=='failed' else ''}>failed</option> \
-        </select>"
-    html += f" <select id='assignee'> \
+        </select><br>"
+    html += f"<select id='assignee'> \
         <option value='Admin' {'selected' if task.assignee=='Admin' else ''}>Admin</option> \
         <option value='AI' {'selected' if task.assignee=='AI' else ''}>AI</option> \
-        </select>"
-    html += f" <button onclick='apiCall(\"PUT\", \"/api/tasks/{pid}/{tid}\", {{status: document.getElementById(\"status\").value, assignee: document.getElementById(\"assignee\").value}})'>Update Routing</button>"
+        </select><br>"
+    html += f"<button onclick='apiCall(\"PUT\", \"/api/tasks/{pid}/{tid}\", {{title: document.getElementById(\"edit_title\").value, descriptions: document.getElementById(\"edit_desc\").value, status: document.getElementById(\"status\").value, assignee: document.getElementById(\"assignee\").value}})'>Update Details</button>"
 
     html += "<hr><h2>Comments & Execution History</h2>"
     html += "<h3>Add Entry</h3>"
