@@ -18,6 +18,9 @@ if exist "requirements.txt" (
 for /f "tokens=2" %%a in ('wmic process where "name='python.exe' and commandline like '%%todox_main.py%%'" get processid ^| findstr /r "[0-9]"') do taskkill /F /PID %%a
 for /f "tokens=2" %%a in ('wmic process where "name='pythonw.exe' and commandline like '%%todox_main.py%%'" get processid ^| findstr /r "[0-9]"') do taskkill /F /PID %%a
 
+:: Kill process listening on port 8899
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":8899" ^| find "LISTENING"') do taskkill /F /PID %%a
+
 :: Wait a brief moment to ensure processes close
 timeout /t 2 /nobreak >nul
 
