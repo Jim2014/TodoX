@@ -4,10 +4,16 @@ from orchestrator.bot import run_bot
 from orchestrator.watcher import start_watcher
 from web.app import run_web
 
+from datetime import datetime
+
 def main():
     state.reset_model()
+    
+    start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state.set_start_time(start_time_str)
+    
     print("--------------------------------------------------")
-    print("TodoX Orchestrator System Starting...")
+    print(f"TodoX Orchestrator System Starting at {start_time_str}...")
     print("--------------------------------------------------")
     
     # Start Web UI in separate process

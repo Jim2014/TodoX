@@ -29,12 +29,14 @@ class SystemState:
                     # Ensure index is within bounds
                     if self.model_index >= len(MODEL_NAMES):
                         self.model_index = 0
+                    self.start_time = data.get("start_time", "Unknown")
                 return
             except Exception as e:
                 print(f"[SystemState] Error loading state file: {e}")
         
         self.model_index = 0
         self.interval_seconds = 5
+        self.start_time = "Unknown"
 
     def _save(self):
         try:
@@ -42,7 +44,8 @@ class SystemState:
             with open(self._state_file, "w") as f:
                 json.dump({
                     "model_index": self.model_index,
-                    "interval_seconds": self.interval_seconds
+                    "interval_seconds": self.interval_seconds,
+                    "start_time": getattr(self, "start_time", "Unknown")
                 }, f)
         except Exception as e:
             print(f"[SystemState] Error saving state file: {e}")
@@ -54,7 +57,8 @@ class SystemState:
             return {
                 "model_index": self.model_index,
                 "current_model": MODEL_NAMES[self.model_index],
-                "interval_seconds": self.interval_seconds
+                "interval_seconds": self.interval_seconds,
+                "start_time": getattr(self, "start_time", "Unknown")
             }
             
     def handle_429(self):
@@ -80,6 +84,12 @@ class SystemState:
     def reset_model(self):
         with self._lock:
             self.model_index = 0
+            self._save()
+
+    def set_start_time(self, start_time_str: str):
+        with self._lock:
+            self._load()
+            self.start_time = start_time_str
             self._save()
 
     def get_current_model(self):

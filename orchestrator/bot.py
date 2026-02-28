@@ -317,6 +317,7 @@ async def sys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         "⚙️ *System State*\n\n"
+        f"⏳ System Uptime Started: `{current.get('start_time', 'Unknown')}`\n"
         f"🤖 Current Model: `{current['current_model']}` (Index: {current['model_index']})\n"
         f"⏱️ Watcher Interval: `{current['interval_seconds']}s`\n\n"
         "📋 *Available Models:*\n"
