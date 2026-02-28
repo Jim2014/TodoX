@@ -184,6 +184,19 @@ def create_task(pid: str, parent_tid: str, title: str, descriptions: str, assign
     parent_task.child_ids.append(new_tid)
     save_task(pid, parent_task)
     
+    # Update project task
+    project_task = load_task(pid, f"{pid}-0")
+    if project_task:
+        changed = False
+        if project_task.status != "in_progress":
+            project_task.status = "in_progress"
+            changed = True
+        if str(project_task.assignee).upper() != "AI":
+            project_task.assignee = "AI"
+            changed = True
+        if changed:
+            save_task(pid, project_task)
+            
     return new_task
 
 def delete_task(pid: str, tid: str) -> bool:
@@ -222,6 +235,20 @@ def update_task(pid: str, tid: str, **kwargs) -> Optional[Task]:
             setattr(task, key, value)
             
     save_task(pid, task)
+    
+    if str(kwargs.get('assignee', '')).upper() == 'AI':
+        project_task = load_task(pid, f"{pid}-0")
+        if project_task:
+            changed = False
+            if project_task.status != "in_progress":
+                project_task.status = "in_progress"
+                changed = True
+            if str(project_task.assignee).upper() != "AI":
+                project_task.assignee = "AI"
+                changed = True
+            if changed:
+                save_task(pid, project_task)
+                
     return task
 
 def add_comment(pid: str, tid: str, author: str, content: str) -> Optional[Task]:
