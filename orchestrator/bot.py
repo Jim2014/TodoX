@@ -1,5 +1,6 @@
 import os
 import re
+import html
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -20,10 +21,13 @@ async def projects_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not projects:
         await update.message.reply_text("No projects found.")
         return
-    text = "Projects List:\n"
+    text = "<b>Projects List:</b>\n"
     for pid, proj in projects.items():
-        text += f"- {pid} ({proj.status}): {proj.title} [Assignee: {proj.assignee}]\n"
-    await update.message.reply_text(text)
+        title = html.escape(proj.title)
+        assignee = html.escape(proj.assignee)
+        status = html.escape(proj.status)
+        text += f"- <code>/p {pid}</code> ({status}): {title} [Assignee: {assignee}]\n"
+    await update.message.reply_text(text, parse_mode='HTML')
 
 async def p_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
