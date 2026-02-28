@@ -348,6 +348,38 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         subprocess.Popen(["bash", "restart.sh"])
 
+async def output_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    num_lines = 10
+    if context.args:
+        try:
+            num_lines = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text("Number of lines must be an integer.")
+            return
+
+    output_log_path = os.path.join(get_data_dir(), "latest_worker_output.log")
+    if not os.path.exists(output_log_path):
+        await update.message.reply_text("No worker output found.")
+        return
+
+    try:
+        with open(output_log_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        last_lines = lines[-num_lines:] if num_lines > 0 else []
+        if not last_lines:
+            await update.message.reply_text("Output log is empty.")
+            return
+            
+        text = "".join(last_lines)
+        if len(text) > 3500:
+            text = "..." + text[-3500:]
+            
+        text = html.escape(text)
+        await update.message.reply_text(f"<pre><code class=\"language-text\">{text}</code></pre>", parse_mode='HTML')
+    except Exception as e:
+        await update.message.reply_text(f"Error reading output: {e}")
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🤖 *TodoX C&C Bot Commands (VOP Format)*\n\n"
@@ -355,6 +387,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/projects - List all projects and their status\n"
         "/sys - Show system state and available models\n"
         "/upmodel [Index] - Update the AI worker model\n"
+        "/output [number] - Show last [number] lines of AI worker output\n"
         "/restart - Pull latest code, update dependencies, and restart system\n\n"
         "*Projects:*\n"
         "/get-project -pid [PID]\n"
@@ -396,6 +429,7 @@ def run_bot():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("sys", sys_command))
     app.add_handler(CommandHandler("upmodel", upmodel_command))
+    app.add_handler(CommandHandler("output", output_command))
     app.add_handler(CommandHandler("restart", restart_command))
     
     # Catch-all multiline command processor

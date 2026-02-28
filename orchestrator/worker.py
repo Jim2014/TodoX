@@ -29,6 +29,10 @@ def execute_ai_task(pid: str):
         with open(gemini_md_path, "w", encoding="utf-8") as f:
             f.write(prompt)
         
+        output_log_path = os.path.join(get_data_dir(), "latest_worker_output.log")
+        with open(output_log_path, "w", encoding="utf-8") as f:
+            f.write(f"[{pid}] Starting AI Worker execution using Gemini CLI (Model: {current_model}).\n")
+            
         # Call Gemini CLI
         gemini_exec = shutil.which("gemini")
         if not gemini_exec:
@@ -56,6 +60,8 @@ def execute_ai_task(pid: str):
         for line in iter(process.stdout.readline, ''):
             print(f"[{pid} | gemini] {line}", end='')
             summary_lines.append(line)
+            with open(output_log_path, "a", encoding="utf-8") as f:
+                f.write(line)
             
         process.stdout.close()
         returncode = process.wait()
