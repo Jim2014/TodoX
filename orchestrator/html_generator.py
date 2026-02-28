@@ -312,6 +312,24 @@ def generate_project_html(pid: str) -> bytes:
             <label class="form-label">Description</label>
             <textarea class="form-control" id="nt-desc"></textarea>
         </div>
+        <div style="display:flex; gap:12px; margin-bottom: 16px;">
+            <div style="flex:1;">
+                <label class="form-label">Status</label>
+                <select class="form-control" id="nt-status">
+                    <option value="not_started" selected>Not Started</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="complete">Complete</option>
+                    <option value="failed">Failed</option>
+                </select>
+            </div>
+            <div style="flex:1;">
+                <label class="form-label">Assignee</label>
+                <select class="form-control" id="nt-assignee">
+                    <option value="Admin">Admin</option>
+                    <option value="AI" selected>AI</option>
+                </select>
+            </div>
+        </div>
         <div class="btn-group">
             <button class="btn btn-primary" onclick="generateNewTask()">Generate Command</button>
             <button class="btn btn-outline" onclick="document.getElementById('new-task-form').style.display='none'">Cancel</button>
@@ -555,15 +573,18 @@ def generate_project_html(pid: str) -> bytes:
             const ptid = document.getElementById('nt-ptid').value;
             const title = document.getElementById('nt-title').value;
             const desc = document.getElementById('nt-desc').value;
-            pushCommand(`/new-task -pid ${{pid}} -ptid ${{ptid}} -title "${{escapeString(title)}}" -des "${{escapeString(desc)}}"`);
+            const status = document.getElementById('nt-status').value;
+            const assignee = document.getElementById('nt-assignee').value;
+            
+            pushCommand(`/new-task -pid ${{pid}} -ptid ${{ptid}} -title "${{escapeString(title)}}" -des "${{escapeString(desc)}}" -assignee "${{assignee}}" -status "${{status}}"`);
             
             // Optimistically update UI
             appState.tasks.push({{
                 id: `${{pid}}-NEW`,
                 title: title,
                 descriptions: desc,
-                status: 'not_started',
-                assignee: 'Admin',
+                status: status,
+                assignee: assignee,
                 comments: []
             }});
             renderTasks();

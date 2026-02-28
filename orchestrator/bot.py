@@ -80,12 +80,14 @@ async def handle_new_task(update: Update, args: dict):
     ptid = args.get('ptid', '').upper()
     title = args.get('title', 'New Task')
     desc = args.get('des', '')
+    assignee = args.get('assignee', 'AI')
+    status = args.get('status', 'not_started')
     
     if not pid or not ptid:
         await update.message.reply_text("Error: -pid and -ptid are required.")
         return
         
-    task = create_task(pid, ptid, title, desc)
+    task = create_task(pid, ptid, title, desc, assignee, status)
     if task:
         await update.message.reply_text(f"Task {task.id} created under {ptid}.")
     else:

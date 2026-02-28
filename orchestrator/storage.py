@@ -146,7 +146,7 @@ def update_project(pid: str, **kwargs) -> Optional[Task]:
         
     return task
 
-def create_task(pid: str, parent_tid: str, title: str, descriptions: str, assignee: str = "Admin") -> Optional[Task]:
+def create_task(pid: str, parent_tid: str, title: str, descriptions: str, assignee: str = "AI", status: str = "not_started") -> Optional[Task]:
     parent_task = load_task(pid, parent_tid)
     if not parent_task:
         return None
@@ -175,7 +175,7 @@ def create_task(pid: str, parent_tid: str, title: str, descriptions: str, assign
         descriptions=descriptions,
         assignee=assignee,
         parent_id=parent_tid,
-        status="in_progress" if assignee.upper() == "AI" else "not_started"
+        status=status
     )
     
     save_task(pid, new_task)
