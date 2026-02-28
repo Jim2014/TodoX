@@ -16,9 +16,10 @@ if exist "requirements.txt" (
 
 :: Kill only the TodoX main process based on command line string matching
 for /f "tokens=2" %%a in ('wmic process where "name='python.exe' and commandline like '%%todox_main.py%%'" get processid ^| findstr /r "[0-9]"') do taskkill /F /PID %%a
+for /f "tokens=2" %%a in ('wmic process where "name='pythonw.exe' and commandline like '%%todox_main.py%%'" get processid ^| findstr /r "[0-9]"') do taskkill /F /PID %%a
 
 :: Wait a brief moment to ensure processes close
 timeout /t 2 /nobreak >nul
 
-:: Restart TodoX in the background
-start "todox_main" python todox_main.py
+:: Restart TodoX in the background without opening a new console window
+start "" pythonw todox_main.py
