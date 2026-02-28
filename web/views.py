@@ -45,6 +45,14 @@ summary:hover { color: #007bff; }
 .tab-btn:hover:not(.active) { color: #333; background: #f8f9fa; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+/* Switch Button */
+.switch-container { position: fixed; top: 20px; right: 20px; background: #fff; padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 14px; z-index: 1000; display: flex; align-items: center; }
+.switch { position: relative; display: inline-block; width: 34px; height: 20px; margin-right: 10px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
+.slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: #007bff; }
+input:checked + .slider:before { transform: translateX(14px); }
 </style>
 <script>
 function switchTab(tabId) {
@@ -104,6 +112,9 @@ async function apiCall(method, url, body=null) {
 // Auto-refresh every 10 seconds
 let refreshTimeout;
 function scheduleRefresh() {
+    const toggle = document.getElementById('autoRefreshToggle');
+    if (!toggle || !toggle.checked) return;
+
     clearTimeout(refreshTimeout);
     refreshTimeout = setTimeout(() => {
         const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
@@ -115,8 +126,46 @@ function scheduleRefresh() {
         }
     }, 10000);
 }
-window.addEventListener('load', scheduleRefresh);
-document.addEventListener('click', scheduleRefresh);
+
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.createElement('div');
+    container.className = 'switch-container';
+    
+    const label = document.createElement('label');
+    label.className = 'switch';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = 'autoRefreshToggle';
+    
+    const span = document.createElement('span');
+    span.className = 'slider';
+    
+    label.appendChild(checkbox);
+    label.appendChild(span);
+    
+    container.appendChild(label);
+    container.appendChild(document.createTextNode('Auto-refresh'));
+    document.body.appendChild(container);
+
+    const saved = localStorage.getItem('autoRefresh');
+    checkbox.checked = saved === 'true'; // false by default
+    
+    checkbox.addEventListener('change', (e) => {
+        localStorage.setItem('autoRefresh', e.target.checked);
+        if (e.target.checked) scheduleRefresh();
+        else clearTimeout(refreshTimeout);
+    });
+});
+
+window.addEventListener('load', () => {
+    const toggle = document.getElementById('autoRefreshToggle');
+    if (toggle && toggle.checked) scheduleRefresh();
+});
+document.addEventListener('click', () => {
+    const toggle = document.getElementById('autoRefreshToggle');
+    if (toggle && toggle.checked) scheduleRefresh();
+});
 </script>
 """
 
