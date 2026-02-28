@@ -2,6 +2,8 @@ import os
 import html
 import shlex
 import traceback
+import platform
+import subprocess
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -338,13 +340,21 @@ async def upmodel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"Invalid index. Must be between 0 and {len(state.get_all_models()) - 1}.")
 
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔄 Restarting TodoX... The system will go offline for a moment.")
+    if platform.system() == "Windows":
+        subprocess.Popen(["cmd.exe", "/c", "restart.bat"])
+    else:
+        subprocess.Popen(["bash", "restart.sh"])
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🤖 *TodoX C&C Bot Commands (VOP Format)*\n\n"
         "/help - Show this help message\n"
         "/projects - List all projects and their status\n"
         "/sys - Show system state and available models\n"
-        "/upmodel [Index] - Update the AI worker model\n\n"
+        "/upmodel [Index] - Update the AI worker model\n"
+        "/restart - Pull latest code, update dependencies, and restart system\n\n"
         "*Projects:*\n"
         "/get-project -pid [PID]\n"
         "/new-project -pid [PID] -title \"[Title]\" -des \"[Description]\"\n"
@@ -385,6 +395,7 @@ def run_bot():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("sys", sys_command))
     app.add_handler(CommandHandler("upmodel", upmodel_command))
+    app.add_handler(CommandHandler("restart", restart_command))
     
     # Catch-all multiline command processor
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'(?m)^/'), handle_multi_line_commands))

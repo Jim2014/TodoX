@@ -12,7 +12,7 @@ def main():
     
     # Start Web UI in separate process
     web_process = run_web()
-    print("Web UI Dashboard running on port 8000...")
+    print("Web UI Dashboard running on port 8899...")
     
     # Start Watcher in background thread
     watcher_thread = threading.Thread(target=start_watcher, daemon=True)

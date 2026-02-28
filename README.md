@@ -32,7 +32,7 @@ This project mandates the use of Conda for environment management and requires t
 1. Start the Orchestrator, Web Panel, and AI background Watcher:
    ```bash
    conda activate todox
-   python main.py
+   python todox_main.py
    ```
    
 2. If `TG_TOKEN` is correctly set, your Telegram bot will be online and accept commands like:
@@ -41,4 +41,4 @@ This project mandates the use of Conda for environment management and requires t
    - `/p [PID]`
    - `/assign [TID] AI` (Triggers AI execution)
    
-3. Visit `http://localhost:8000` to view the read-only Visualization Panel.
+3. Visit `http://localhost:8899` to view the read-only Visualization Panel.
