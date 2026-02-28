@@ -34,7 +34,10 @@ def execute_ai_task(pid: str):
         if not gemini_exec:
             raise RuntimeError("gemini executable not found in PATH")
             
-        cmd = [gemini_exec, "-y", "--model", current_model, "-p", '"plan and execute the project.json"']
+        cmd = [gemini_exec, "-y"]
+        if current_model != "default":
+            cmd.extend(["--model", current_model])
+        cmd.extend(["-p", '"plan and execute the project.json"'])
         print(f"[{pid}] Executing headless command: {' '.join(cmd)} (cwd: {project_dir})")
         
         env = os.environ.copy()

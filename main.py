@@ -1,9 +1,11 @@
 import threading
+from orchestrator.state import state
 from orchestrator.bot import run_bot
 from orchestrator.watcher import start_watcher
 from web.app import run_web
 
 def main():
+    state.reset_model()
     print("--------------------------------------------------")
     print("TodoX Orchestrator System Starting...")
     print("--------------------------------------------------")
