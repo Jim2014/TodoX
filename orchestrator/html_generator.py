@@ -16,6 +16,7 @@ def generate_file_tree_data(root_dir, current_path=""):
     
     for d in dirs:
         rel_path = os.path.join(current_path, d) if current_path else d
+        rel_path = rel_path.replace("\\", "/")
         tree.append({
             "name": d,
             "type": "directory",
@@ -25,6 +26,7 @@ def generate_file_tree_data(root_dir, current_path=""):
         
     for f in files:
         rel_path = os.path.join(current_path, f) if current_path else f
+        rel_path = rel_path.replace("\\", "/")
         tree.append({
             "name": f,
             "type": "file",
