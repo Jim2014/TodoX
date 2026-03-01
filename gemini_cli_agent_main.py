@@ -160,22 +160,59 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
         if model:
             cmd_args.extend(["-m", model])
             
+        all_output = []
+        chunk_buffer = []
+
         if sys.platform == "win32":
-            # Windows requires shell execution for .cmd/.bat npm wrapper scripts
-            cmd_str = subprocess.list2cmdline(cmd_args)
+            # Run the exact worker.py Popen implementation in a background thread to avoid blocking Telegram
+            def run_windows_process():
+                cmd_str = subprocess.list2cmdline(cmd_args)
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                
+                process = subprocess.Popen(
+                    cmd_str,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, # Merge stderr into stdout exactly like worker.py
+                    stdin=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE
+                )
+                
+                for line in iter(process.stdout.readline, ''):
+                    decoded_line = line.rstrip('\n')
+                    print(f"STDOUT: {decoded_line}")
+                    append_to_log(f"STDOUT: {decoded_line}")
+                    all_output.append(decoded_line)
+                    
+                    if out_lines > 0:
+                        chunk_buffer.append(decoded_line)
+                        if len(chunk_buffer) >= out_lines:
+                            chunk = "\n".join(chunk_buffer)
+                            chunk_buffer.clear()
+                            chunk_html = html.escape(chunk)
+                            if len(chunk_html) > 4000:
+                                chunk_html = chunk_html[:4000] + "..."
+                            
+                            # We can't safely call await update.message.reply_text from a background thread synchronously.
+                            # So we schedule it onto the main asyncio loop.
+                            async def send_chunk(text_chunk):
+                                try:
+                                    await update.message.reply_text(f"<pre><code class=\"language-text\">{text_chunk}</code></pre>", parse_mode='HTML')
+                                except Exception as e:
+                                    print(f"EXCEPTION sending chunk: {e}")
+                                    append_to_log(f"EXCEPTION sending chunk: {e}")
+                                    
+                            asyncio.run_coroutine_threadsafe(send_chunk(chunk_html), asyncio.get_running_loop())
+                
+                process.stdout.close()
+                process.wait()
+
+            await asyncio.to_thread(run_windows_process)
             
-            # Fix for node-pty "AttachConsole failed" on Windows
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            
-            process = await asyncio.create_subprocess_shell(
-                cmd_str,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                startupinfo=startupinfo,
-                creationflags=subprocess.CREATE_NEW_CONSOLE
-            )
         else:
             # Mac/Linux run via exec securely
             process = await asyncio.create_subprocess_exec(
@@ -183,39 +220,36 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-        
-        all_output = []
-        chunk_buffer = []
-        
-        async def read_stream(stream, prefix):
-            while True:
-                line = await stream.readline()
-                if not line:
-                    break
-                decoded_line = line.decode('utf-8', errors='replace').rstrip('\r\n')
-                print(f"{prefix}: {decoded_line}")
-                append_to_log(f"{prefix}: {decoded_line}")
-                all_output.append(decoded_line)
-                
-                if out_lines > 0:
-                    chunk_buffer.append(decoded_line)
-                    if len(chunk_buffer) >= out_lines:
-                        chunk = "\n".join(chunk_buffer)
-                        chunk_buffer.clear()
-                        chunk_html = html.escape(chunk)
-                        if len(chunk_html) > 4000:
-                            chunk_html = chunk_html[:4000] + "..."
-                        try:
-                            await update.message.reply_text(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>", parse_mode='HTML')
-                        except Exception as e:
-                            print(f"EXCEPTION sending chunk: {e}")
-                            append_to_log(f"EXCEPTION sending chunk: {e}")
+            
+            async def read_stream(stream, prefix):
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    decoded_line = line.decode('utf-8', errors='replace').rstrip('\r\n')
+                    print(f"{prefix}: {decoded_line}")
+                    append_to_log(f"{prefix}: {decoded_line}")
+                    all_output.append(decoded_line)
+                    
+                    if out_lines > 0:
+                        chunk_buffer.append(decoded_line)
+                        if len(chunk_buffer) >= out_lines:
+                            chunk = "\n".join(chunk_buffer)
+                            chunk_buffer.clear()
+                            chunk_html = html.escape(chunk)
+                            if len(chunk_html) > 4000:
+                                chunk_html = chunk_html[:4000] + "..."
+                            try:
+                                await update.message.reply_text(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>", parse_mode='HTML')
+                            except Exception as e:
+                                print(f"EXCEPTION sending chunk: {e}")
+                                append_to_log(f"EXCEPTION sending chunk: {e}")
 
-        await asyncio.gather(
-            read_stream(process.stdout, "STDOUT"),
-            read_stream(process.stderr, "STDERR")
-        )
-        await process.wait()
+            await asyncio.gather(
+                read_stream(process.stdout, "STDOUT"),
+                read_stream(process.stderr, "STDERR")
+            )
+            await process.wait()
         
         if out_lines > 0:
             if chunk_buffer:
