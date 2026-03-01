@@ -5,3 +5,4 @@ data/
 __pycache__/
 todox_run.log
 todox.log
+output.txt
