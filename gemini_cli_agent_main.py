@@ -152,11 +152,16 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
     append_to_log(f"--- Executing: {instruction} ---")
     
     try:
+        import shutil
         import sys
         import subprocess
         
+        gemini_exec = shutil.which("gemini")
+        if not gemini_exec:
+            raise FileNotFoundError("Could not find 'gemini' executable in system PATH.")
+            
         # Build command dynamically
-        cmd_args = ["gemini", "-y", "-p", instruction]
+        cmd_args = [gemini_exec, "-y", "-p", instruction]
         if model:
             cmd_args.extend(["-m", model])
             
