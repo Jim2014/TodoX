@@ -71,6 +71,24 @@ def execute_ai_task(pid: str):
         
         summary_lines = []
         for line in iter(process.stdout.readline, ''):
+            decoded_line = line.rstrip('\n')
+            
+            if any(x in decoded_line for x in [
+                "conpty_console_list_agent.js",
+                "var consoleProcessList = getConsoleProcessList(shellPid)",
+                "Error: AttachConsole failed",
+                "node-pty",
+                "node:internal/modules/cjs",
+                "TracingChannel.traceSync",
+                "Execution Async Resource",
+                "wrapModuleLoad",
+                "Function.executeUserEntryPoint",
+                "node:internal/main/run_main_module"
+            ]) or decoded_line.strip() == "^" or (
+                not decoded_line.strip() and summary_lines and "var consoleProcessList = getConsoleProcessList(shellPid);" in summary_lines[-1]
+            ):
+                continue
+                
             print(f"[{pid} | gemini] {line}", end='')
             summary_lines.append(line)
             with open(output_log_path, "a", encoding="utf-8") as f:
