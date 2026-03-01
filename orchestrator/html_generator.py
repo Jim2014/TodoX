@@ -282,7 +282,7 @@ def generate_project_html(pid: str) -> bytes:
         <div class="card">
             <h3 class="card-title" style="margin-bottom:12px;">Project Files</h3>
             <span class="helper-text" style="margin-bottom:16px;">Copy relative paths to use with <code>/get-file</code>.</span>
-            <div id="files-container"></div>
+            <div id="files-container" style="overflow-x: auto;"></div>
         </div>
     </main>
 
@@ -495,15 +495,9 @@ def generate_project_html(pid: str) -> bytes:
                     `;
                 }} else {{
                     html += `
-                        <div class="tree-item" style="padding:4px 0; display:flex; justify-content:space-between; align-items:flex-start;">
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <span class="tree-icon">📄</span> 
-                                <div style="display:flex; flex-direction:column;">
-                                    <span>${{n.name}}</span>
-                                    <span style="font-size:0.7rem; color:var(--secondary); font-family:monospace;">${{n.path}}</span>
-                                </div>
-                            </div>
-                            <button class="btn btn-outline" style="width:auto; padding:2px 8px; font-size:0.7rem; color:var(--primary); border-color:var(--primary);" onclick="copyCmdText('/get-file -pid ${{pid}} -path &quot;${{n.path}}&quot;')">cmd</button>
+                        <div class="tree-item" style="padding:4px 0; display:flex; align-items:center; gap:8px;" onclick="copyCmdText('/get-file -pid ${{pid}} -path &quot;${{n.path}}&quot;')">
+                            <span class="tree-icon">📄</span> 
+                            <span>${{n.name}}</span>
                         </div>
                     `;
                 }}
