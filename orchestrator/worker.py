@@ -44,6 +44,7 @@ def execute_ai_task(pid: str):
         cmd.extend(["-p", '"plan and execute the project.json"'])
         print(f"[{pid}] Executing headless command: {' '.join(cmd)} (cwd: {project_dir})")
         
+        env = os.environ.copy()
         kwargs = {}
         if os.name == "nt":
             import ctypes
