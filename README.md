@@ -48,7 +48,8 @@ This project mandates the use of Conda for environment management and requires t
    - `/projects`
    - `/p [PID]`
    - `/assign [TID] AI` (Triggers AI execution)
-   - `/gcli [-m model] [-o lines] -msg "[instruction]"` (Requires running `gemini_cli_agent_main.py`)
+   - `/gcli [-m model | -sm | -lm] [-o lines] -msg "[instruction]"` (Requires running `gemini_cli_agent_main.py`)
+   - `/gcli_commit` (Auto-commit and push changes using Gemini)
    - `/gcli_log [number]` (View memory history)
    
 4. Visit `http://localhost:8899` to view the read-only Visualization Panel.

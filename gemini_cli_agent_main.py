@@ -31,6 +31,10 @@ def parse_args(arg_list):
             i += 1
     return parsed
 
+# Configurable Model Aliases
+SMALL_MODEL = "gemini-2.5-flash"
+LARGE_MODEL = "gemini-2.5-pro"
+
 MAX_LOG_LINES = 1000
 log_history = []
 
@@ -92,14 +96,14 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_text = update.message.text.partition(' ')[2]
     if not raw_text.strip():
         print(f"[TG-REJECT] Missing arguments.")
-        await update.message.reply_text("Usage: /gcli [-m model] [-o lines] -msg [instruction]\nExample: /gcli -m gemini-2.5-flash -o 10 -msg check status")
+        await update.message.reply_text("Usage: /gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]\nExample: /gcli -sm -o 10 -msg check status")
         return
         
     try:
         msg_idx = raw_text.find('-msg ')
         if msg_idx == -1:
             print(f"[TG-REJECT] Could not find '-msg ' in {raw_text}")
-            await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model] [-o lines] -msg [instruction]")
+            await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]")
             return
             
         instruction = raw_text[msg_idx + 5:].strip()
@@ -112,10 +116,18 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     if not instruction:
         print("[TG-REJECT] Instruction was empty.")
-        await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model] [-o lines] -msg [instruction]")
+        await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]")
         return
         
-    model = parsed_args.get('m', '')
+    # Model Resolution Priority: Explicit (-m) -> Small (-sm) -> Large (-lm) -> None (Default)
+    model = ''
+    if 'm' in parsed_args and isinstance(parsed_args['m'], str):
+        model = parsed_args['m']
+    elif 'sm' in parsed_args:
+        model = SMALL_MODEL
+    elif 'lm' in parsed_args:
+        model = LARGE_MODEL
+        
     out_lines = 0
     if 'o' in parsed_args:
         try:
@@ -225,14 +237,25 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as edit_err:
             await update.message.reply_text(f"❌ Failed to execute gemini cli: {e}")
 
+async def gcli_commit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    instruction = "Examine the current git status and git diff. Add any temporary or generated files that should not be tracked to .gitignore. Then, commit all other meaningful changes with a detailed and descriptive commit message, and push the commit to the remote repository."
+    
+    # We pass the full command string to let gcli_command parse it and execute it inline.
+    if update.message:
+        update.message.text = f"/gcli -m gemini-2.5-flash -o 10 -msg {instruction}"
+        print(f"\n[TG-RECV-WRAPPER] Routing /gcli_commit to main gcli handler")
+        await gcli_command(update, context)
+
 async def post_init(app: ApplicationBuilder):
     if ADMIN_CHAT_ID:
         welcome_text = (
             "🚀 *Gemini CLI Agent is online and ready!*\n\n"
             "*Available Commands:*\n"
-            "• `/gcli [-m model] -msg [instruction]`\n"
+            "• `/gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]`\n"
             "  Run a command via Gemini CLI.\n"
-            "  _Example:_ `/gcli -m gemini-2.5-flash -msg check status`\n\n"
+            "  _Example:_ `/gcli -sm -o 10 -msg check status`\n\n"
+            "• `/gcli_commit`\n"
+            "  Auto-commit and push changes using Gemini.\n\n"
             "• `/gcli_log [number]`\n"
             "  View recent output history (max 1000 lines).\n"
             "  _Example:_ `/gcli_log 20` (defaults to 10 if number omitted)\n"
@@ -260,6 +283,7 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("gcli", gcli_command))
     app.add_handler(CommandHandler("gcli_log", gcli_log_command))
+    app.add_handler(CommandHandler("gcli_commit", gcli_commit_command))
     
     # Catch-all for when formatting breaks CommandHandler (e.g. backticks)
     async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -269,6 +293,8 @@ def main():
         
         if text.startswith("/gcli_log"):
             await gcli_log_command(update, context)
+        elif text.startswith("/gcli_commit"):
+            await gcli_commit_command(update, context)
         elif text.startswith("/gcli"):
             await gcli_command(update, context)
         else:
