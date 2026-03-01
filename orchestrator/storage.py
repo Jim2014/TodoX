@@ -21,7 +21,12 @@ def _atomic_write_json(path: str, data: Any):
         raise
 
 def get_data_dir() -> str:
-    return os.environ.get("DATA_DIR", "./data")
+    raw_dir = os.environ.get("DATA_DIR", "./data")
+    if not os.path.isabs(raw_dir):
+        # Resolve relative to the project root directory (which is 2 levels up from this file)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.abspath(os.path.join(project_root, raw_dir))
+    return raw_dir
 
 def load_projects() -> Dict[str, ProjectSummary]:
     data_dir = get_data_dir()
