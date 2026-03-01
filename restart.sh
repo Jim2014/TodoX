@@ -22,5 +22,8 @@ fi
 # Kill only the TodoX main process
 pkill -f "python todox_main.py"
 
+# Kill any orphaned Web UI processes holding the port
+lsof -t -i :8899 | xargs kill -9 2>/dev/null || true
+
 # Restart TodoX in the background
 nohup python todox_main.py > todox_run.log 2>&1 &

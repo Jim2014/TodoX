@@ -23,30 +23,26 @@ def _atomic_write_json(path: str, data: Any):
 def get_data_dir() -> str:
     return os.environ.get("DATA_DIR", "./data")
 
-def get_projects_file() -> str:
-    return os.path.join(get_data_dir(), "projects.json")
-
 def load_projects() -> Dict[str, ProjectSummary]:
-    projects_file = get_projects_file()
-    if not os.path.exists(projects_file):
-        return {}
-    with open(projects_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        result = {}
-        for k, v in data.items():
-            task = load_task(k, f"{k}-0")
-            if task:
-                v['status'] = task.status
-                v['assignee'] = task.assignee
-            else:
-                v['status'] = v.get('status', 'unknown')
-                v['assignee'] = v.get('assignee', 'unknown')
-            result[k] = ProjectSummary(**v)
+    data_dir = get_data_dir()
+    projects_dir = os.path.join(data_dir, "projects")
+    result = {}
+    
+    if not os.path.exists(projects_dir):
         return result
-
-def save_projects(projects: Dict[str, ProjectSummary]):
-    projects_file = get_projects_file()
-    _atomic_write_json(projects_file, {k: v.model_dump(exclude={'status', 'assignee'}) for k, v in projects.items()})
+        
+    for pid in os.listdir(projects_dir):
+        project_path = os.path.join(projects_dir, pid)
+        if os.path.isdir(project_path):
+            task = load_task(pid, f"{pid}-0")
+            if task:
+                result[pid] = ProjectSummary(
+                    id=pid,
+                    title=task.title,
+                    status=task.status,
+                    assignee=task.assignee
+                )
+    return result
 
 def _get_task_path(pid: str, tid: str) -> str:
     data_dir = get_data_dir()
@@ -66,13 +62,7 @@ def save_task(pid: str, task: Task):
     path = _get_task_path(pid, task.id)
     _atomic_write_json(path, task.model_dump())
         
-    # Automatically sync root task changes up to the global projects.json
-    if task.id == f"{pid}-0":
-        projects = load_projects()
-        if pid in projects:
-            if projects[pid].title != task.title:
-                projects[pid].title = task.title
-                save_projects(projects)
+
         
 def create_project(pid: str, title: str, descriptions: str, system_prompt: str) -> Task:
     data_dir = get_data_dir()
@@ -97,15 +87,7 @@ def create_project(pid: str, title: str, descriptions: str, system_prompt: str) 
     )
     save_task(pid, project_task)
     
-    # Update global projects.json
-    projects = load_projects()
-    projects[pid] = ProjectSummary(
-        id=pid,
-        title=title,
-        status=project_task.status,
-        assignee=project_task.assignee
-    )
-    save_projects(projects)
+
     
     return project_task
 
@@ -118,10 +100,7 @@ def delete_project(pid: str) -> bool:
         
     shutil.rmtree(project_dir)
     
-    projects = load_projects()
-    if pid in projects:
-        del projects[pid]
-        save_projects(projects)
+
         
     return True
 
@@ -137,12 +116,7 @@ def update_project(pid: str, **kwargs) -> Optional[Task]:
             
     save_task(pid, task)
     
-    # Sync with global projects.json
-    projects = load_projects()
-    if pid in projects:
-        if "title" in kwargs:
-            projects[pid].title = kwargs["title"]
-            save_projects(projects)
+
         
     return task
 
