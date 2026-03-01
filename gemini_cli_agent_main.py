@@ -136,7 +136,10 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("[TG-REJECT] -o flag was not an integer.")
             await update.message.reply_text("Error: -o must be an integer.")
             return
-            
+
+    await _execute_gcli(update, instruction, model, out_lines)
+
+async def _execute_gcli(update: Update, instruction: str, model: str, out_lines: int):
     status_text = f"⏳ Running Gemini CLI with instructions:\n<pre><code>{html.escape(instruction)}</code></pre>"
     if model:
         status_text = f"⏳ Running Gemini CLI [Model: {model}] with instructions:\n<pre><code>{html.escape(instruction)}</code></pre>"
@@ -248,11 +251,8 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def gcli_commit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     instruction = "Examine the current git status and git diff. Add any temporary or generated files that should not be tracked to .gitignore. Then, commit all other meaningful changes with a detailed and descriptive commit message, and push the commit to the remote repository."
     
-    # We pass the full command string to let gcli_command parse it and execute it inline.
-    if update.message:
-        update.message.text = f"/gcli -m gemini-2.5-flash -o 10 -msg {instruction}"
-        print(f"\n[TG-RECV-WRAPPER] Routing /gcli_commit to main gcli handler")
-        await gcli_command(update, context)
+    print(f"\n[TG-RECV-WRAPPER] Routing /gcli_commit to main gcli engine")
+    await _execute_gcli(update, instruction, SMALL_MODEL, 10)
 
 async def post_init(app: ApplicationBuilder):
     if ADMIN_CHAT_ID:
@@ -297,13 +297,19 @@ def main():
     async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text if update.message and update.message.text else ""
         text = text.strip().strip("`").strip()
-        update.message.text = text # overwrite stripped directly
         
+        # We can't overwrite update.message.text in telegram v20, 
+        # so we have to manually route by examining the raw string directly
         if text.startswith("/gcli_log"):
+            # Mock the context args manually
+            parts = text.split()
+            context.args = parts[1:] if len(parts) > 1 else []
             await gcli_log_command(update, context)
         elif text.startswith("/gcli_commit"):
             await gcli_commit_command(update, context)
         elif text.startswith("/gcli"):
+            # Reconstruct the string without backticks to pass validation inside gcli_command parser
+            update.message._text = text # forcefully set internal private var for the rare case we need it
             await gcli_command(update, context)
         else:
             print(f"[TG-DEBUG] Ignored unrelated text: {text}")
