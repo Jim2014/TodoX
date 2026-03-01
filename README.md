@@ -24,6 +24,7 @@ This project mandates the use of Conda for environment management and requires t
    ```env
    DATA_DIR=./data
    TG_TOKEN=your_telegram_bot_token_here
+   GCLI_TG_TOKEN=your_gemini_cli_telegram_bot_token_here
    ADMIN_CHAT_ID=your_personal_chat_id_here
    ```
 
@@ -35,13 +36,22 @@ This project mandates the use of Conda for environment management and requires t
    python todox_main.py
    ```
    
-2. If `TG_TOKEN` is correctly set, your Telegram bot will be online and accept commands like:
+2. Start the isolated Gemini CLI Telegram Agent (Optional):
+   ```bash
+   conda activate todox
+   python gemini_cli_agent_main.py
+   ```
+   *Note: If both use the same TG_TOKEN, they will conflict. Run them separately or with distinct tokens.*
+
+3. If `TG_TOKEN` is correctly set, your Telegram bot will be online and accept commands like:
    - `/new [PID] "[Project Desc]"`
    - `/projects`
    - `/p [PID]`
    - `/assign [TID] AI` (Triggers AI execution)
+   - `/gcli [-m model] [-o lines] -msg "[instruction]"` (Requires running `gemini_cli_agent_main.py`)
+   - `/gcli_log [number]` (View memory history)
    
-3. Visit `http://localhost:8899` to view the read-only Visualization Panel.
+4. Visit `http://localhost:8899` to view the read-only Visualization Panel.
 
 ## Maintenance
 

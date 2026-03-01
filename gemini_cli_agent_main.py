@@ -1,0 +1,273 @@
+import os
+import shlex
+import asyncio
+import html
+from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+# Load environment variables
+load_dotenv()
+TELEGRAM_TOKEN = os.environ.get("GCLI_TG_TOKEN", "")
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
+
+# Verify if we should restrict to admin
+if not ADMIN_CHAT_ID:
+    print("WARNING: ADMIN_CHAT_ID not found in .env. The /gcli command will be available to ANYONE who messages the bot.")
+
+def parse_args(arg_list):
+    parsed = {}
+    i = 0
+    while i < len(arg_list):
+        if arg_list[i].startswith('-'):
+            key = arg_list[i][1:] # remove hyphen
+            if i + 1 < len(arg_list) and not arg_list[i+1].startswith('-'):
+                parsed[key] = arg_list[i+1]
+                i += 2
+            else:
+                parsed[key] = True
+                i += 1
+        else:
+            i += 1
+    return parsed
+
+MAX_LOG_LINES = 1000
+log_history = []
+
+def append_to_log(text: str):
+    global log_history
+    lines = text.split('\n')
+    for line in lines:
+        if line.strip():
+            log_history.append(line.strip())
+    # Keep only the last MAX_LOG_LINES
+    if len(log_history) > MAX_LOG_LINES:
+        log_history = log_history[-MAX_LOG_LINES:]
+
+async def gcli_log_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Security check
+    chat_id = str(update.effective_chat.id)
+    if ADMIN_CHAT_ID and chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("Unauthorized access.")
+        return
+
+    num_lines = 10
+    args = context.args if context.args is not None else update.message.text.split()[1:]
+    if args:
+        try:
+            num_lines = int(args[0])
+        except ValueError:
+            await update.message.reply_text("Usage: /gcli_log [number]\nNumber must be an integer.")
+            return
+
+    if not log_history:
+        await update.message.reply_text("Log is empty.")
+        return
+
+    # Get the requested number of lines, bounded by available history
+    lines_to_show = log_history[-num_lines:] if num_lines > 0 else []
+    
+    if not lines_to_show:
+        await update.message.reply_text("No lines to show.")
+        return
+        
+    text = "\n".join(lines_to_show)
+    if len(text) > 3500:
+        text = "..." + text[-3500:]
+        
+    text_html = html.escape(text)
+    await update.message.reply_text(f"<b>Last {len(lines_to_show)} log lines:</b>\n<pre><code class=\"language-text\">{text_html}</code></pre>", parse_mode='HTML')
+
+async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw_incoming = update.message.text if update.message else "No text"
+    print(f"\n[TG-RECV] Received command: {raw_incoming}")
+    
+    # Security check: only allow ADMIN_CHAT_ID if it is set
+    chat_id = str(update.effective_chat.id)
+    if ADMIN_CHAT_ID and chat_id != ADMIN_CHAT_ID:
+        print(f"[TG-REJECT] Unauthorized chat ID: {chat_id}")
+        await update.message.reply_text("Unauthorized access. Your chat ID is not registered as ADMIN.")
+        return
+
+    raw_text = update.message.text.partition(' ')[2]
+    if not raw_text.strip():
+        print(f"[TG-REJECT] Missing arguments.")
+        await update.message.reply_text("Usage: /gcli [-m model] [-o lines] -msg [instruction]\nExample: /gcli -m gemini-2.5-flash -o 10 -msg check status")
+        return
+        
+    try:
+        msg_idx = raw_text.find('-msg ')
+        if msg_idx == -1:
+            print(f"[TG-REJECT] Could not find '-msg ' in {raw_text}")
+            await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model] [-o lines] -msg [instruction]")
+            return
+            
+        instruction = raw_text[msg_idx + 5:].strip()
+        pre_args = shlex.split(raw_text[:msg_idx])
+        parsed_args = parse_args(pre_args)
+    except Exception as e:
+        print(f"[TG-ERROR] Parse exception: {e}")
+        await update.message.reply_text(f"Error parsing arguments: {e}")
+        return
+        
+    if not instruction:
+        print("[TG-REJECT] Instruction was empty.")
+        await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model] [-o lines] -msg [instruction]")
+        return
+        
+    model = parsed_args.get('m', '')
+    out_lines = 0
+    if 'o' in parsed_args:
+        try:
+            out_lines = int(parsed_args['o'])
+        except ValueError:
+            print("[TG-REJECT] -o flag was not an integer.")
+            await update.message.reply_text("Error: -o must be an integer.")
+            return
+            
+    status_text = f"⏳ Running Gemini CLI with instructions:\n<pre><code>{html.escape(instruction)}</code></pre>"
+    if model:
+        status_text = f"⏳ Running Gemini CLI [Model: {model}] with instructions:\n<pre><code>{html.escape(instruction)}</code></pre>"
+        
+    status_msg = await update.message.reply_text(status_text, parse_mode='HTML')
+    print(f"--- Executing Gemini CLI ---")
+    print(f"Instruction: {instruction}")
+    print(f"Model: {model if model else 'default'}")
+    print(f"----------------------------")
+    append_to_log(f"--- Executing: {instruction} ---")
+    
+    try:
+        # Build command dynamically
+        cmd_args = ["gemini", "-y", "-p", instruction]
+        if model:
+            cmd_args.extend(["-m", model])
+            
+        process = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        all_output = []
+        chunk_buffer = []
+        
+        async def read_stream(stream, prefix):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                decoded_line = line.decode('utf-8', errors='replace').rstrip('\r\n')
+                print(f"{prefix}: {decoded_line}")
+                append_to_log(f"{prefix}: {decoded_line}")
+                all_output.append(decoded_line)
+                
+                if out_lines > 0:
+                    chunk_buffer.append(decoded_line)
+                    if len(chunk_buffer) >= out_lines:
+                        chunk = "\n".join(chunk_buffer)
+                        chunk_buffer.clear()
+                        chunk_html = html.escape(chunk)
+                        if len(chunk_html) > 4000:
+                            chunk_html = chunk_html[:4000] + "..."
+                        try:
+                            await update.message.reply_text(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>", parse_mode='HTML')
+                        except Exception as e:
+                            print(f"EXCEPTION sending chunk: {e}")
+                            append_to_log(f"EXCEPTION sending chunk: {e}")
+
+        await asyncio.gather(
+            read_stream(process.stdout, "STDOUT"),
+            read_stream(process.stderr, "STDERR")
+        )
+        await process.wait()
+        
+        if out_lines > 0:
+            if chunk_buffer:
+                chunk = "\n".join(chunk_buffer)
+                chunk_html = html.escape(chunk)
+                if len(chunk_html) > 4000:
+                    chunk_html = chunk_html[:4000] + "..."
+                try:
+                    await update.message.reply_text(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>", parse_mode='HTML')
+                except Exception as e:
+                    pass
+            await update.message.reply_text(f"✅ Finished Gemini CLI execution.")
+        else:
+            response = "\n".join(all_output)
+            if not response:
+                response = "Command finished with no output."
+                append_to_log("Command finished with no output.")
+            
+            if len(response) > 4000:
+                response = "..." + response[-4000:]
+                
+            response_html = html.escape(response)
+            await status_msg.edit_text(f"✅ Finished Gemini CLI:\n<pre><code class=\"language-text\">{response_html}</code></pre>", parse_mode='HTML')
+            
+    except Exception as e:
+        print(f"❌ EXCEPTION executing gemini cli: {e}")
+        append_to_log(f"EXCEPTION: {e}")
+        try:
+            await status_msg.edit_text(f"❌ Failed to execute gemini cli: {e}")
+        except Exception as edit_err:
+            await update.message.reply_text(f"❌ Failed to execute gemini cli: {e}")
+
+async def post_init(app: ApplicationBuilder):
+    if ADMIN_CHAT_ID:
+        welcome_text = (
+            "🚀 *Gemini CLI Agent is online and ready!*\n\n"
+            "*Available Commands:*\n"
+            "• `/gcli [-m model] -msg [instruction]`\n"
+            "  Run a command via Gemini CLI.\n"
+            "  _Example:_ `/gcli -m gemini-2.5-flash -msg check status`\n\n"
+            "• `/gcli_log [number]`\n"
+            "  View recent output history (max 1000 lines).\n"
+            "  _Example:_ `/gcli_log 20` (defaults to 10 if number omitted)\n"
+        )
+        try:
+            await app.bot.send_message(
+                chat_id=ADMIN_CHAT_ID, 
+                text=welcome_text,
+                parse_mode='Markdown'
+            )
+            print(f"Sent startup message to admin chat ID: {ADMIN_CHAT_ID}")
+        except Exception as e:
+            print(f"Failed to send startup message: {e}")
+
+def main():
+    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "your_gemini_cli_telegram_bot_token_here":
+        print("GCLI_TG_TOKEN not set or invalid in .env file. Exiting.")
+        return
+        
+    print("=========================================")
+    print("Starting Gemini CLI Agent Polling...")
+    print("Ensure GCLI_TG_TOKEN is distinct from TodoX TG_TOKEN to avoid Conflict exceptions.")
+    print("=========================================")
+    
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    app.add_handler(CommandHandler("gcli", gcli_command))
+    app.add_handler(CommandHandler("gcli_log", gcli_log_command))
+    
+    # Catch-all for when formatting breaks CommandHandler (e.g. backticks)
+    async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        text = update.message.text if update.message and update.message.text else ""
+        text = text.strip().strip("`").strip()
+        update.message.text = text # overwrite stripped directly
+        
+        if text.startswith("/gcli_log"):
+            await gcli_log_command(update, context)
+        elif text.startswith("/gcli"):
+            await gcli_command(update, context)
+        else:
+            print(f"[TG-DEBUG] Ignored unrelated text: {text}")
+            
+    from telegram.ext import MessageHandler, filters
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[\\`]?/gcli'), fallback_handler))
+    
+    try:
+        app.run_polling()
+    except Exception as e:
+        print(f"Error while polling: {e}")
+
+if __name__ == '__main__':
+    main()
