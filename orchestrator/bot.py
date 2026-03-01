@@ -1,4 +1,5 @@
 import os
+import io
 import html
 import shlex
 import traceback
@@ -255,7 +256,23 @@ async def handle_get_file(update: Update, args: dict):
         
     file_path = os.path.join(get_data_dir(), "projects", pid, path)
     if os.path.exists(file_path):
-        await update.message.reply_document(document=open(file_path, 'rb'), filename=os.path.basename(path))
+        if path.lower().endswith(".md"):
+            try:
+                from .html_generator import generate_markdown_viewer_html
+                
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                
+                html_bytes = generate_markdown_viewer_html(pid, path, content)
+                html_io = io.BytesIO(html_bytes)
+                
+                filename = os.path.basename(path) + ".html"
+                await update.message.reply_document(document=html_io, filename=filename)
+            except Exception as e:
+                await update.message.reply_text(f"Error rendering MD: {e}")
+        else:
+            with open(file_path, 'rb') as f:
+                await update.message.reply_document(document=f, filename=os.path.basename(path))
     else:
         await update.message.reply_text(f"Error: File '{path}' not found in project {pid}.")
 
