@@ -10,11 +10,11 @@ router = APIRouter()
 
 HTML_STYLE = """
 <style>
-body { font-family: sans-serif; margin: 0; padding: 20px; background: #f4f6f8; }
+body { font-family: sans-serif; margin: 0; padding: 20px; background: #f4f6f8; color: #333; }
 .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 .layout-container { display: flex; min-height: 90vh; max-width: 1400px; margin: 0 auto; gap: 20px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 .sidebar { width: 350px; border-right: 1px solid #eee; padding-right: 20px; overflow-y: auto; flex-shrink: 0; }
-.main-pane { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+.main-pane { flex: 1; display: flex; flex-direction: column; overflow-y: auto; min-width: 0; }
 .iframe-container { width: 100%; height: 70vh; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
 .file-link { display: block; margin: 2px 0 2px 10px; padding: 4px 8px; background: #f8f9fa; border-radius: 4px; cursor: pointer; text-decoration: none; color: #333; border: 1px solid #eee; font-size: 13px; }
 .file-link:hover { background: #e2e6ea; border-color: #dae0e5; }
@@ -30,7 +30,7 @@ hr { border: 0; border-top: 1px solid #eee; margin: 20px 0; }
 a { color: #007bff; text-decoration: none; }
 a:hover { text-decoration: underline; }
 textarea { width: 100%; min-height: 80px; font-family: inherit; }
-pre { background: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; font-size: 13px; }
+pre { background: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; font-size: 13px; overflow-x: auto; }
 
 /* Tree view styles */
 details { margin-left: 15px; }
@@ -45,6 +45,21 @@ summary:hover { color: #007bff; }
 .tab-btn:hover:not(.active) { color: #333; background: #f8f9fa; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+
+/* Mobile optimization */
+@media (max-width: 768px) {
+    body { padding: 10px; }
+    .layout-container { flex-direction: column; padding: 15px; gap: 10px; min-height: auto; }
+    .sidebar { display: none; }
+    .tabs-container { overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; margin-bottom: 15px; }
+    .tab-btn { padding: 10px 15px; font-size: 14px; }
+    .card { flex-direction: column; align-items: flex-start; }
+    .card-actions { margin-left: 0; margin-top: 10px; width: 100%; }
+    .card-actions button { width: 100%; }
+    .switch-container { position: relative; top: 0; right: 0; margin-bottom: 20px; justify-content: center; box-shadow: none; border: 1px solid #eee; }
+    .mobile-only { display: block !important; }
+}
+
 /* Switch Button */
 .switch-container { position: fixed; top: 20px; right: 20px; background: #fff; padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 14px; z-index: 1000; display: flex; align-items: center; }
 .switch { position: relative; display: inline-block; width: 34px; height: 20px; margin-right: 10px; }
@@ -196,7 +211,7 @@ def generate_file_tree(root_dir, pid, current_path=""):
 @router.get("/", response_class=HTMLResponse)
 def read_root():
     projects = load_projects()
-    html = f"<html><head><title>TodoX Panel</title>{HTML_STYLE}</head><body><div class='container'>"
+    html = f"<html><head><title>TodoX Panel</title><meta name='viewport' content='width=device-width, initial-scale=1.0'>{HTML_STYLE}</head><body><div class='container'>"
     
     # Navigation Breadcrumb
     html += f"<p style='font-size:14px; margin-bottom: 20px;'>Home</p>"
@@ -228,7 +243,15 @@ def read_project(pid: str):
     if not proj_task:
         raise HTTPException(status_code=404, detail="Project not found")
         
-    html = f"<html><head><title>Project {pid}</title>{HTML_STYLE}</head><body>"
+    html = f"<html><head><title>Project {pid}</title><meta name='viewport' content='width=device-width, initial-scale=1.0'>{HTML_STYLE}</head><body>"
+    
+    # Pre-generate file tree
+    project_dir = os.path.join(get_data_dir(), "projects", pid)
+    if os.path.exists(project_dir):
+        file_tree_html = generate_file_tree(project_dir, pid)
+    else:
+        file_tree_html = f"<p style='font-size:12px;color:#999;'>No project folder found.</p>"
+
     html += "<div class='layout-container'><div class='sidebar'>"
     
     # Navigation Breadcrumb
@@ -243,16 +266,8 @@ def read_project(pid: str):
     
     html += "<div class='tree-root'>"
     html += f"<h3>&#128193; {pid}</h3>"
-    
-    project_dir = os.path.join(get_data_dir(), "projects", pid)
-    
-    if os.path.exists(project_dir):
-        html += generate_file_tree(project_dir, pid)
-    else:
-        html += f"<p style='font-size:12px;color:#999;'>No project folder found.</p>"
+    html += file_tree_html
     html += "</div>" # close tree-root
-    
-    
     html += "</div>" # close sidebar
     
     # RIGHT PANE: Details and Subtasks + File Viewer
@@ -260,12 +275,26 @@ def read_project(pid: str):
     
     # Tabs Header
     html += "<div class='tabs-container'>"
-    html += "<button id='btn-tab-info' class='tab-btn active' onclick=\"switchTab('tab-info')\">Project Info & Tasks</button>"
+    html += "<button id='btn-tab-info' class='tab-btn active' onclick=\"switchTab('tab-info')\">Info & Tasks</button>"
+    html += "<button id='btn-tab-files' class='tab-btn' onclick=\"switchTab('tab-files')\">Files</button>"
     html += "<button id='btn-tab-viewer' class='tab-btn' onclick=\"switchTab('tab-viewer')\">File Viewer</button>"
+    html += "</div>"
+    
+    # Tab Content: Files (Mobile focus)
+    html += "<div id='tab-files' class='tab-content'>"
+    html += f"<p style='font-size:14px; margin-bottom: 20px;'><a href='/'>Home</a> / {pid}</p>"
+    html += f"<h2>Project: {pid}</h2>"
+    html += f"<p><b>Title:</b> {proj_task.title}</p>"
+    html += "<div class='tree-root' style='border-top:none; margin-top:0;'>"
+    html += file_tree_html
+    html += "</div>"
     html += "</div>"
     
     # Tab Content: Project Info
     html += "<div id='tab-info' class='tab-content active'>"
+    
+    # Breadcrumb for mobile in Info tab
+    html += f"<p class='mobile-only' style='font-size:14px; margin-bottom: 20px; display:none;'><a href='/'>Home</a> / {pid}</p>"
     
     # Edit details block
     html += "<details><summary><h3 style='display:inline;'>Edit Project Details</h3></summary>"
@@ -378,7 +407,7 @@ def read_task(pid: str, tid: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    html = f"<html><head><title>Task {tid}</title>{HTML_STYLE}</head><body><div class='container'>"
+    html = f"<html><head><title>Task {tid}</title><meta name='viewport' content='width=device-width, initial-scale=1.0'>{HTML_STYLE}</head><body><div class='container'>"
     
     # Navigation Breadcrumb
     html += f"<p style='font-size:14px; margin-bottom: 20px;'><a href='/'>Home</a> / <a href='/project/{pid}'>{pid}</a> / {tid}</p>"
