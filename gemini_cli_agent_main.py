@@ -199,6 +199,24 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
                 
                 for line in iter(process.stdout.readline, ''):
                     decoded_line = line.rstrip('\n')
+                    
+                    if any(x in decoded_line for x in [
+                        "conpty_console_list_agent.js",
+                        "var consoleProcessList = getConsoleProcessList(shellPid)",
+                        "Error: AttachConsole failed",
+                        "node-pty",
+                        "node:internal/modules/cjs",
+                        "TracingChannel.traceSync",
+                        "Execution Async Resource",
+                        "wrapModuleLoad",
+                        "Function.executeUserEntryPoint",
+                        "node:internal/main/run_main_module"
+                    ]) or decoded_line.strip() == "^" or (
+                        # Catch the orphaned empty line in the stack trace
+                        not decoded_line.strip() and all_output and "var consoleProcessList = getConsoleProcessList(shellPid);" in all_output[-1]
+                    ):
+                        continue
+                        
                     print(f"STDOUT: {decoded_line}")
                     append_to_log(f"STDOUT: {decoded_line}")
                     all_output.append(decoded_line)
@@ -242,6 +260,23 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
                     if not line:
                         break
                     decoded_line = line.decode('utf-8', errors='replace').rstrip('\r\n')
+                    
+                    if any(x in decoded_line for x in [
+                        "conpty_console_list_agent.js",
+                        "var consoleProcessList = getConsoleProcessList(shellPid)",
+                        "Error: AttachConsole failed",
+                        "node-pty",
+                        "node:internal/modules/cjs",
+                        "TracingChannel.traceSync",
+                        "Execution Async Resource",
+                        "wrapModuleLoad",
+                        "Function.executeUserEntryPoint",
+                        "node:internal/main/run_main_module"
+                    ]) or decoded_line.strip() == "^" or (
+                        not decoded_line.strip() and all_output and "var consoleProcessList = getConsoleProcessList(shellPid);" in all_output[-1]
+                    ):
+                        continue
+                        
                     print(f"{prefix}: {decoded_line}")
                     append_to_log(f"{prefix}: {decoded_line}")
                     all_output.append(decoded_line)
