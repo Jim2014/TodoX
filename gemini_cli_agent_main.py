@@ -160,10 +160,18 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sys.platform == "win32":
             # Windows requires shell execution for .cmd/.bat npm wrapper scripts
             cmd_str = subprocess.list2cmdline(cmd_args)
+            
+            # Fix for node-pty "AttachConsole failed" on Windows
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            
             process = await asyncio.create_subprocess_shell(
                 cmd_str,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NEW_CONSOLE
             )
         else:
             # Mac/Linux run via exec securely
