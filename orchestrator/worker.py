@@ -44,7 +44,17 @@ def execute_ai_task(pid: str):
         cmd.extend(["-p", '"plan and execute the project.json"'])
         print(f"[{pid}] Executing headless command: {' '.join(cmd)} (cwd: {project_dir})")
         
-        env = os.environ.copy()
+        kwargs = {}
+        if os.name == "nt":
+            import ctypes
+            # Fix for node-pty "AttachConsole failed" on Windows
+            # Creates a new hidden console for the node process to attach to safely.
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            # Add CREATE_NEW_CONSOLE (0x00000010)
+            kwargs["startupinfo"] = startupinfo
+            kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
         
         process = subprocess.Popen(
             cmd,
@@ -52,8 +62,10 @@ def execute_ai_task(pid: str):
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # Merge stderr into stdout
+            stdin=subprocess.PIPE,     # Provide a stdin pipe
             text=True,
-            bufsize=1  # Line buffered
+            bufsize=1,  # Line buffered
+            **kwargs
         )
         
         summary_lines = []
