@@ -42,3 +42,8 @@ This project mandates the use of Conda for environment management and requires t
    - `/assign [TID] AI` (Triggers AI execution)
    
 3. Visit `http://localhost:8899` to view the read-only Visualization Panel.
+
+## Maintenance
+
+- **Automated Restart**: Use the `/restart` command in the Telegram bot to pull the latest code, update dependencies, and restart the system in the background.
+- **Logs**: On Windows, activity is logged to `todox.log`. Detailed web server logs are located in `todox_web_stdout.log` and `todox_web_stderr.log`.

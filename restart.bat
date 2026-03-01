@@ -1,29 +1,41 @@
 @echo off
 cd /d "%~dp0"
 
-:: Pull latest code
+echo === TodoX Restarting System ===
+
+:: 1. Release file locks by killing all project-related processes FIRST
+echo Shutting down existing TodoX processes...
+
+:: Kill Web server on port 8899
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":8899" ^| find "LISTENING"') do (
+    echo Killing Web Process (PID %%a)...
+    taskkill /F /PID %%a 2>nul
+)
+
+:: Kill Main Orchestrator and any sub-processes running todox_main.py
+:: Using powershell for modern and reliable command-line matching
+powershell -Command "Get-CimInstance Win32_Process -Filter \"Name like 'python%%.exe' and CommandLine like '%%todox_main.py%%'\" | Foreach-Object { echo \"Killing Orchestrator (PID $($_.ProcessId))...\"; Stop-Process -Id $_.ProcessId -Force }" 2>nul
+
+:: Give the OS a few seconds to fully release file handles
+timeout /t 3 /nobreak >nul
+
+:: 2. Pull latest code
+echo Pulling latest changes from git...
 git pull
 
-:: Activate conda environment
+:: 3. Update dependencies
+echo Setting up environment and dependencies...
 call conda activate todox
-
-:: Update dependencies
 if exist "requirements.txt" (
     pip install -r requirements.txt
 ) else if exist "environment.yml" (
     conda env update -f environment.yml
 )
 
-@REM :: Kill only the TodoX main process based on command line string matching
-@REM for /f "tokens=2" %%a in ('wmic process where "name='python.exe' and commandline like '%%todox_main.py%%'" get processid ^| findstr /r "[0-9]"') do taskkill /F /PID %%a
-@REM for /f "tokens=2" %%a in ('wmic process where "name='pythonw.exe' and commandline like '%%todox_main.py%%'" get processid ^| findstr /r "[0-9]"') do taskkill /F /PID %%a
-
-:: Kill process listening on port 8899
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":8899" ^| find "LISTENING"') do taskkill /F /PID %%a
-
-:: Wait a brief moment to ensure processes close
-timeout /t 2 /nobreak >nul
-
-:: Restart TodoX in the background without opening a new console window
-:: Redirecting output to todox.log to prevent pythonw from crashing on print statements
+:: 4. Restart the system
+echo Starting TodoX in background...
+:: Clear log file to prevent access conflicts, but use append if deletion fails
+del todox.log 2>nul
 start "" pythonw todox_main.py > todox.log 2>&1
+
+echo Restart sequence complete.
