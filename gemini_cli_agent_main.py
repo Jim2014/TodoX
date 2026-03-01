@@ -169,12 +169,21 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
         chunk_buffer = []
 
         if sys.platform == "win32":
+            # Grab the active loop before entering the background thread
+            loop = asyncio.get_running_loop()
+            
             # Run the exact worker.py Popen implementation in a background thread to avoid blocking Telegram
             def run_windows_process():
                 cmd_str = subprocess.list2cmdline(cmd_args)
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
+                
+                # Force node into a dumb, non-interactive terminal that safely bypasses conpty and node-pty
+                env = os.environ.copy()
+                env["CI"] = "true"
+                env["FORCE_COLOR"] = "0"
+                env["TERM"] = "dumb"
                 
                 process = subprocess.Popen(
                     cmd_str,
@@ -183,6 +192,7 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
                     stdin=subprocess.PIPE,
                     text=True,
                     bufsize=1,
+                    env=env,
                     startupinfo=startupinfo,
                     creationflags=subprocess.CREATE_NEW_CONSOLE
                 )
@@ -203,7 +213,7 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
                                 chunk_html = chunk_html[:4000] + "..."
                             
                             # We can't safely call await update.message.reply_text from a background thread synchronously.
-                            # So we schedule it onto the main asyncio loop.
+                            # So we schedule it onto the main explicitly captured asyncio loop.
                             async def send_chunk(text_chunk):
                                 try:
                                     await update.message.reply_text(f"<pre><code class=\"language-text\">{text_chunk}</code></pre>", parse_mode='HTML')
@@ -211,7 +221,7 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
                                     print(f"EXCEPTION sending chunk: {e}")
                                     append_to_log(f"EXCEPTION sending chunk: {e}")
                                     
-                            asyncio.run_coroutine_threadsafe(send_chunk(chunk_html), asyncio.get_running_loop())
+                            asyncio.run_coroutine_threadsafe(send_chunk(chunk_html), loop)
                 
                 process.stdout.close()
                 process.wait()
