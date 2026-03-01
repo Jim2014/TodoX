@@ -25,4 +25,5 @@ for /f "tokens=5" %%a in ('netstat -aon ^| find ":8899" ^| find "LISTENING"') do
 timeout /t 2 /nobreak >nul
 
 :: Restart TodoX in the background without opening a new console window
-start "" pythonw todox_main.py
+:: Redirecting output to todox.log to prevent pythonw from crashing on print statements
+start "" pythonw todox_main.py > todox.log 2>&1

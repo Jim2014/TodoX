@@ -1,3 +1,12 @@
+import sys
+import os
+
+# Prevent crash when running via pythonw on Windows
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 import threading
 from orchestrator.state import state
 from orchestrator.bot import run_bot
