@@ -137,16 +137,29 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     append_to_log(f"--- Executing: {instruction} ---")
     
     try:
+        import sys
+        import subprocess
+        
         # Build command dynamically
         cmd_args = ["gemini", "-y", "-p", instruction]
         if model:
             cmd_args.extend(["-m", model])
             
-        process = await asyncio.create_subprocess_exec(
-            *cmd_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
+        if sys.platform == "win32":
+            # Windows requires shell execution for .cmd/.bat npm wrapper scripts
+            cmd_str = subprocess.list2cmdline(cmd_args)
+            process = await asyncio.create_subprocess_shell(
+                cmd_str,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+        else:
+            # Mac/Linux run via exec securely
+            process = await asyncio.create_subprocess_exec(
+                *cmd_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
         
         all_output = []
         chunk_buffer = []
