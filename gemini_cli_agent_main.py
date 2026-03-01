@@ -333,7 +333,12 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
             await update.message.reply_text(f"❌ Failed to execute gemini cli: {e}")
 
 async def gcli_commit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    instruction = "Examine the current git status and git diff. Add any temporary or generated files that should not be tracked to .gitignore. Then, commit all other meaningful changes with a detailed and descriptive commit message, and push the commit to the remote repository."
+    instruction = (
+        "Examine the current `git status` and `git diff`. "
+        "CRITICAL: DO NOT track, stage, or commit anything inside the `data/` directory or any `.log` files. Only commit actual source code files. "
+        "Add any temporary or generated files that should not be tracked to `.gitignore`. "
+        "Then, commit all meaningful source code changes with a detailed and descriptive commit message, and push the commit to the remote repository."
+    )
     
     print(f"\n[TG-RECV-WRAPPER] Routing /gcli_commit to main gcli engine")
     await _execute_gcli(update, instruction, SMALL_MODEL, 10)
