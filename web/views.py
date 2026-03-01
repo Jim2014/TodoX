@@ -15,7 +15,7 @@ body { font-family: sans-serif; margin: 0; padding: 20px; background: #f4f6f8; c
 .layout-container { display: flex; min-height: 90vh; max-width: 1400px; margin: 0 auto; gap: 20px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 .sidebar { width: 350px; border-right: 1px solid #eee; padding-right: 20px; overflow-y: auto; flex-shrink: 0; }
 .main-pane { flex: 1; display: flex; flex-direction: column; overflow-y: auto; min-width: 0; }
-.iframe-container { width: 100%; height: 70vh; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+.iframe-container { width: 100%; flex: 1; border: 1px solid #ccc; border-radius: 4px; background: #fff; min-height: 70vh; }
 .file-link { display: block; margin: 2px 0 2px 10px; padding: 4px 8px; background: #f8f9fa; border-radius: 4px; cursor: pointer; text-decoration: none; color: #333; border: 1px solid #eee; font-size: 13px; }
 .file-link:hover { background: #e2e6ea; border-color: #dae0e5; }
 .card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 5px; background: #fafafa; display: flex; justify-content: space-between; align-items: center; }
@@ -43,8 +43,8 @@ summary:hover { color: #007bff; }
 .tab-btn { background: none; border: none; padding: 10px 20px; font-size: 16px; cursor: pointer; color: #555; }
 .tab-btn.active { color: #007bff; border-bottom: 2px solid #007bff; margin-bottom: -2px; font-weight: bold; }
 .tab-btn:hover:not(.active) { color: #333; background: #f8f9fa; }
-.tab-content { display: none; }
-.tab-content.active { display: block; }
+.tab-content { display: none; flex-direction: column; height: 100%; }
+.tab-content.active { display: flex; }
 
 /* Mobile optimization */
 @media (max-width: 768px) {
@@ -56,12 +56,11 @@ summary:hover { color: #007bff; }
     .card { flex-direction: column; align-items: flex-start; }
     .card-actions { margin-left: 0; margin-top: 10px; width: 100%; }
     .card-actions button { width: 100%; }
-    .switch-container { position: relative; top: 0; right: 0; margin-bottom: 20px; justify-content: center; box-shadow: none; border: 1px solid #eee; }
     .mobile-only { display: block !important; }
 }
 
 /* Switch Button */
-.switch-container { position: fixed; top: 20px; right: 20px; background: #fff; padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 14px; z-index: 1000; display: flex; align-items: center; }
+.switch-container { background: #fff; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; display: inline-flex; align-items: center; margin-top: 10px; }
 .switch { position: relative; display: inline-block; width: 34px; height: 20px; margin-right: 10px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
@@ -127,7 +126,7 @@ async function apiCall(method, url, body=null) {
 // Auto-refresh every 10 seconds
 let refreshTimeout;
 function scheduleRefresh() {
-    const toggle = document.getElementById('autoRefreshToggle');
+    const toggle = document.querySelector('.auto-refresh-checkbox');
     if (!toggle || !toggle.checked) return;
 
     clearTimeout(refreshTimeout);
@@ -143,42 +142,50 @@ function scheduleRefresh() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const container = document.createElement('div');
-    container.className = 'switch-container';
-    
-    const label = document.createElement('label');
-    label.className = 'switch';
-    
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.id = 'autoRefreshToggle';
-    
-    const span = document.createElement('span');
-    span.className = 'slider';
-    
-    label.appendChild(checkbox);
-    label.appendChild(span);
-    
-    container.appendChild(label);
-    container.appendChild(document.createTextNode('Auto-refresh'));
-    document.body.appendChild(container);
+    const placeholders = document.querySelectorAll('[id^="auto-refresh-placeholder"]');
+    if (placeholders.length === 0) return;
 
-    const saved = localStorage.getItem('autoRefresh');
-    checkbox.checked = saved === 'true'; // false by default
+    const saved = localStorage.getItem('autoRefresh') === 'true';
     
-    checkbox.addEventListener('change', (e) => {
-        localStorage.setItem('autoRefresh', e.target.checked);
-        if (e.target.checked) scheduleRefresh();
-        else clearTimeout(refreshTimeout);
+    placeholders.forEach((ph, index) => {
+        const container = document.createElement('div');
+        container.className = 'switch-container';
+        
+        const label = document.createElement('label');
+        label.className = 'switch';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'auto-refresh-checkbox';
+        checkbox.checked = saved;
+        
+        const span = document.createElement('span');
+        span.className = 'slider';
+        
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        
+        container.appendChild(label);
+        container.appendChild(document.createTextNode('Auto-refresh'));
+        ph.appendChild(container);
+
+        checkbox.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            localStorage.setItem('autoRefresh', isChecked);
+            // Sync all checkboxes
+            document.querySelectorAll('.auto-refresh-checkbox').forEach(cb => cb.checked = isChecked);
+            if (isChecked) scheduleRefresh();
+            else clearTimeout(refreshTimeout);
+        });
     });
 });
 
 window.addEventListener('load', () => {
-    const toggle = document.getElementById('autoRefreshToggle');
+    const toggle = document.querySelector('.auto-refresh-checkbox');
     if (toggle && toggle.checked) scheduleRefresh();
 });
 document.addEventListener('click', () => {
-    const toggle = document.getElementById('autoRefreshToggle');
+    const toggle = document.querySelector('.auto-refresh-checkbox');
     if (toggle && toggle.checked) scheduleRefresh();
 });
 </script>
@@ -216,7 +223,7 @@ def read_root():
     # Navigation Breadcrumb
     html += f"<p style='font-size:14px; margin-bottom: 20px;'>Home</p>"
     
-    html += "<h1>TodoX Project Dashboard</h1>"
+    html += "<div style='display:flex; justify-content:space-between; align-items:center;'><h1>TodoX Project Dashboard</h1><div id='auto-refresh-placeholder'></div></div>"
     
     html += "<h3>Create Project</h3>"
     html += "<div style='display:flex; flex-direction:column; gap:10px; max-width: 600px;'>"
@@ -262,7 +269,8 @@ def read_project(pid: str):
     html += f"<p><b>Title:</b> {proj_task.title}</p>"
     html += f"<p><b>Status:</b> <span style='background:#007bff;color:white;padding:2px 6px;border-radius:3px;font-size:12px;'>{proj_task.status}</span></p>"
     html += f"<p><b>Assignee:</b> {proj_task.assignee}</p>"
-    html += f"<details><summary style='font-size:14px;color:#555;'><b>Description</b></summary><p style='font-size:14px;color:#555;margin-left:15px;'>{proj_task.descriptions}</p></details>"
+    html += "<div id='auto-refresh-placeholder'></div>"
+    html += f"<details style='margin-top:10px;'><summary style='font-size:14px;color:#555;'><b>Description</b></summary><p style='font-size:14px;color:#555;margin-left:15px;'>{proj_task.descriptions}</p></details>"
     
     html += "<div class='tree-root'>"
     html += f"<h3>&#128193; {pid}</h3>"
@@ -285,6 +293,7 @@ def read_project(pid: str):
     html += f"<p style='font-size:14px; margin-bottom: 20px;'><a href='/'>Home</a> / {pid}</p>"
     html += f"<h2>Project: {pid}</h2>"
     html += f"<p><b>Title:</b> {proj_task.title}</p>"
+    html += "<div id='auto-refresh-placeholder-mobile'></div>"
     html += "<div class='tree-root' style='border-top:none; margin-top:0;'>"
     html += file_tree_html
     html += "</div>"
@@ -295,6 +304,9 @@ def read_project(pid: str):
     
     # Breadcrumb for mobile in Info tab
     html += f"<p class='mobile-only' style='font-size:14px; margin-bottom: 20px; display:none;'><a href='/'>Home</a> / {pid}</p>"
+    
+    # Auto-refresh for mobile
+    html += "<div id='auto-refresh-placeholder-info'></div>"
     
     # Edit details block
     html += "<details><summary><h3 style='display:inline;'>Edit Project Details</h3></summary>"
@@ -360,7 +372,6 @@ def read_project(pid: str):
 
     # Tab Content: File Viewer
     html += "<div id='tab-viewer' class='tab-content'>"
-    html += "<div style='display:flex; justify-content:space-between; align-items:center;'><h3>File Viewer</h3><button onclick=\"switchTab('tab-info')\" style='padding:4px 8px; font-size:12px;'>Close Viewer</button></div>"
     html += "<iframe name='file_viewer' class='iframe-container' src='about:blank'></iframe>"
     html += "</div>" # close tab-viewer
 
@@ -412,7 +423,7 @@ def read_task(pid: str, tid: str):
     # Navigation Breadcrumb
     html += f"<p style='font-size:14px; margin-bottom: 20px;'><a href='/'>Home</a> / <a href='/project/{pid}'>{pid}</a> / {tid}</p>"
     
-    html += f"<h1>Task: {tid}</h1>"
+    html += f"<div style='display:flex; justify-content:space-between; align-items:center;'><h1>Task: {tid}</h1><div id='auto-refresh-placeholder'></div></div>"
     html += f"<p><b>Project ID:</b> <a href='/project/{pid}'>{pid}</a></p>"
     html += f"<p><b>Parent ID:</b> {task.parent_id}</p>"
     html += f"<p><b>Title:</b> {task.title}</p>"
