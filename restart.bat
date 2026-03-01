@@ -7,10 +7,8 @@ echo === TodoX Restarting System ===
 echo Shutting down existing TodoX processes...
 
 :: Kill Web server on port 8899
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":8899" ^| find "LISTENING"') do (
-    echo Killing Web Process (PID %%a)...
-    taskkill /F /PID %%a 2>nul
-)
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":8899" ^| find "LISTENING"') do taskkill /F /PID %%a 2>nul
+if %ERRORLEVEL% EQU 0 echo Killed Web Process.
 
 :: Kill Main Orchestrator and any sub-processes running todox_main.py
 :: Using powershell for modern and reliable command-line matching
