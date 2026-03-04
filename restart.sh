@@ -19,8 +19,15 @@ elif [ -f "environment.yml" ]; then
     conda env update -f environment.yml
 fi
 
-# Kill only the TodoX main process
-pkill -f "python todox_main.py"
+# Kill only the TodoX main process gracefully first
+pkill -f "python todox_main.py" || true
+sleep 2
+
+# Force kill any remaining TodoX main processes
+pkill -9 -f "python todox_main.py" || true
+
+# Kill any orphaned python multiprocessing workers related to todox
+pkill -9 -f "todox.*multiprocessing" || true
 
 # Kill any orphaned Web UI processes holding the port
 lsof -t -i :8899 | xargs kill -9 2>/dev/null || true
