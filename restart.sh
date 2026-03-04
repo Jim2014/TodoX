@@ -1,4 +1,16 @@
 #!/bin/bash
+
+# Ensure only one instance of this script runs at a time
+LOCKFILE="/tmp/todox_restart.pid"
+if [ -f "$LOCKFILE" ]; then
+    PID=$(cat "$LOCKFILE")
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Restart is already in progress (PID $PID)."
+        exit 1
+    fi
+fi
+echo $$ > "$LOCKFILE"
+
 # Move to the script's directory
 cd "$(dirname "$0")"
 
