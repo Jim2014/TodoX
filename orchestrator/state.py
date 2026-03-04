@@ -5,6 +5,7 @@ from .storage import get_data_dir
 
 # Global list of models
 MODEL_NAMES = [
+    "gemini-3-flash-preview",
     "default",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
