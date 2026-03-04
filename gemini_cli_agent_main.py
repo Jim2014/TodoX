@@ -32,8 +32,14 @@ def parse_args(arg_list):
     return parsed
 
 # Configurable Model Aliases
-SMALL_MODEL = "gemini-2.5-flash"
-LARGE_MODEL = "gemini-2.5-pro"
+MODEL_ALIASES = {
+    '3p': 'gemini-3-pro-preview',
+    '3f': 'gemini-3-flash-preview',
+    '2.5p': 'gemini-2.5-pro',
+    '2.5f': 'gemini-2.5-flash',
+    '3.1p': 'gemini-3.1-pro-preview',
+    '3.1f': 'gemini-3.1-flash-lite-preview'
+}
 
 MAX_LOG_LINES = 1000
 log_history = []
@@ -96,14 +102,14 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_text = update.message.text.partition(' ')[2]
     if not raw_text.strip():
         print(f"[TG-REJECT] Missing arguments.")
-        await update.message.reply_text("Usage: /gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]\nExample: /gcli -sm -o 10 -msg check status")
+        await update.message.reply_text("Usage: /gcli [-m model | -3p | -3f | -2.5p | -2.5f | -3.1p | -3.1f] [-o lines] -msg [instruction]\nExample: /gcli -3f -o 10 -msg check status")
         return
         
     try:
         msg_idx = raw_text.find('-msg ')
         if msg_idx == -1:
             print(f"[TG-REJECT] Could not find '-msg ' in {raw_text}")
-            await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]")
+            await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model | -3p | -3f | -2.5p | -2.5f | -3.1p | -3.1f] [-o lines] -msg [instruction]")
             return
             
         instruction = raw_text[msg_idx + 5:].strip()
@@ -116,17 +122,18 @@ async def gcli_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     if not instruction:
         print("[TG-REJECT] Instruction was empty.")
-        await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]")
+        await update.message.reply_text("Error: -msg argument is required.\nUsage: /gcli [-m model | -3p | -3f | -2.5p | -2.5f | -3.1p | -3.1f] [-o lines] -msg [instruction]")
         return
         
-    # Model Resolution Priority: Explicit (-m) -> Small (-sm) -> Large (-lm) -> None (Default)
+    # Model Resolution Priority: Explicit (-m) -> Alias -> None (Default)
     model = ''
     if 'm' in parsed_args and isinstance(parsed_args['m'], str):
         model = parsed_args['m']
-    elif 'sm' in parsed_args:
-        model = SMALL_MODEL
-    elif 'lm' in parsed_args:
-        model = LARGE_MODEL
+    else:
+        for alias, model_name in MODEL_ALIASES.items():
+            if alias in parsed_args:
+                model = model_name
+                break
         
     out_lines = 0
     if 'o' in parsed_args:
@@ -341,16 +348,16 @@ async def gcli_commit_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     
     print(f"\n[TG-RECV-WRAPPER] Routing /gcli_commit to main gcli engine")
-    await _execute_gcli(update, instruction, SMALL_MODEL, 10)
+    await _execute_gcli(update, instruction, MODEL_ALIASES['2.5f'], 10)
 
 async def post_init(app: ApplicationBuilder):
     if ADMIN_CHAT_ID:
         welcome_text = (
             "🚀 *Gemini CLI Agent is online and ready!*\n\n"
             "*Available Commands:*\n"
-            "• `/gcli [-m model | -sm | -lm] [-o lines] -msg [instruction]`\n"
+            "• `/gcli [-m model | -3p | -3f | -2.5p | -2.5f | -3.1p | -3.1f] [-o lines] -msg [instruction]`\n"
             "  Run a command via Gemini CLI.\n"
-            "  _Example:_ `/gcli -sm -o 10 -msg check status`\n\n"
+            "  _Example:_ `/gcli -3f -o 10 -msg check status`\n\n"
             "• `/gcli_commit`\n"
             "  Auto-commit and push changes using Gemini.\n\n"
             "• `/gcli_log [number]`\n"
