@@ -159,165 +159,27 @@ async def _execute_gcli(update: Update, instruction: str, model: str, out_lines:
     append_to_log(f"--- Executing: {instruction} ---")
     
     try:
-        import shutil
-        import sys
-        import subprocess
+        from orchestrator.gemini_runner import run_gemini_cli_stream
         
-        gemini_exec = shutil.which("gemini")
-        if not gemini_exec:
-            raise FileNotFoundError("Could not find 'gemini' executable in system PATH.")
-            
-        # Build command dynamically
-        cmd_args = [gemini_exec, "-y", "-p", instruction]
-        if model:
-            cmd_args.extend(["-m", model])
-            
-        all_output = []
-        chunk_buffer = []
-
-        if sys.platform == "win32":
-            # Grab the active loop before entering the background thread
-            loop = asyncio.get_running_loop()
-            
-            # Run the exact worker.py Popen implementation in a background thread to avoid blocking Telegram
-            def run_windows_process():
-                cmd_str = subprocess.list2cmdline(cmd_args)
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
+        async def send_chunk(chunk_html):
+            try:
+                await update.message.reply_text(chunk_html, parse_mode='HTML')
+            except Exception as e:
+                print(f"EXCEPTION sending chunk: {e}")
+                append_to_log(f"EXCEPTION sending chunk: {e}")
                 
-                # Force node into a dumb, non-interactive terminal that safely bypasses conpty and node-pty
-                env = os.environ.copy()
-                env["CI"] = "true"
-                env["FORCE_COLOR"] = "0"
-                env["TERM"] = "dumb"
-                
-                process = subprocess.Popen(
-                    cmd_str,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT, # Merge stderr into stdout exactly like worker.py
-                    stdin=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    env=env,
-                    startupinfo=startupinfo,
-                    creationflags=subprocess.CREATE_NEW_CONSOLE
-                )
-                
-                for line in iter(process.stdout.readline, ''):
-                    decoded_line = line.rstrip('\n')
-                    
-                    if any(x in decoded_line for x in [
-                        "conpty_console_list_agent.js",
-                        "var consoleProcessList = getConsoleProcessList(shellPid)",
-                        "Error: AttachConsole failed",
-                        "node-pty",
-                        "node:internal/modules/cjs",
-                        "TracingChannel.traceSync",
-                        "Execution Async Resource",
-                        "wrapModuleLoad",
-                        "Function.executeUserEntryPoint",
-                        "node:internal/main/run_main_module"
-                    ]) or decoded_line.strip() == "^" or (
-                        # Catch the orphaned empty line in the stack trace
-                        not decoded_line.strip() and all_output and "var consoleProcessList = getConsoleProcessList(shellPid);" in all_output[-1]
-                    ):
-                        continue
-                        
-                    print(f"STDOUT: {decoded_line}")
-                    append_to_log(f"STDOUT: {decoded_line}")
-                    all_output.append(decoded_line)
-                    
-                    if out_lines > 0:
-                        chunk_buffer.append(decoded_line)
-                        if len(chunk_buffer) >= out_lines:
-                            chunk = "\n".join(chunk_buffer)
-                            chunk_buffer.clear()
-                            chunk_html = html.escape(chunk)
-                            if len(chunk_html) > 4000:
-                                chunk_html = chunk_html[:4000] + "..."
-                            
-                            # We can't safely call await update.message.reply_text from a background thread synchronously.
-                            # So we schedule it onto the main explicitly captured asyncio loop.
-                            async def send_chunk(text_chunk):
-                                try:
-                                    await update.message.reply_text(f"<pre><code class=\"language-text\">{text_chunk}</code></pre>", parse_mode='HTML')
-                                except Exception as e:
-                                    print(f"EXCEPTION sending chunk: {e}")
-                                    append_to_log(f"EXCEPTION sending chunk: {e}")
-                                    
-                            asyncio.run_coroutine_threadsafe(send_chunk(chunk_html), loop)
-                
-                process.stdout.close()
-                process.wait()
-
-            await asyncio.to_thread(run_windows_process)
+        def log_cb(msg):
+            append_to_log(msg)
             
-        else:
-            # Mac/Linux run via exec securely
-            process = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            async def read_stream(stream, prefix):
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
-                    decoded_line = line.decode('utf-8', errors='replace').rstrip('\r\n')
-                    
-                    if any(x in decoded_line for x in [
-                        "conpty_console_list_agent.js",
-                        "var consoleProcessList = getConsoleProcessList(shellPid)",
-                        "Error: AttachConsole failed",
-                        "node-pty",
-                        "node:internal/modules/cjs",
-                        "TracingChannel.traceSync",
-                        "Execution Async Resource",
-                        "wrapModuleLoad",
-                        "Function.executeUserEntryPoint",
-                        "node:internal/main/run_main_module"
-                    ]) or decoded_line.strip() == "^" or (
-                        not decoded_line.strip() and all_output and "var consoleProcessList = getConsoleProcessList(shellPid);" in all_output[-1]
-                    ):
-                        continue
-                        
-                    print(f"{prefix}: {decoded_line}")
-                    append_to_log(f"{prefix}: {decoded_line}")
-                    all_output.append(decoded_line)
-                    
-                    if out_lines > 0:
-                        chunk_buffer.append(decoded_line)
-                        if len(chunk_buffer) >= out_lines:
-                            chunk = "\n".join(chunk_buffer)
-                            chunk_buffer.clear()
-                            chunk_html = html.escape(chunk)
-                            if len(chunk_html) > 4000:
-                                chunk_html = chunk_html[:4000] + "..."
-                            try:
-                                await update.message.reply_text(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>", parse_mode='HTML')
-                            except Exception as e:
-                                print(f"EXCEPTION sending chunk: {e}")
-                                append_to_log(f"EXCEPTION sending chunk: {e}")
-
-            await asyncio.gather(
-                read_stream(process.stdout, "STDOUT"),
-                read_stream(process.stderr, "STDERR")
-            )
-            await process.wait()
+        all_output = await run_gemini_cli_stream(
+            instruction=instruction,
+            model=model,
+            out_lines=out_lines,
+            send_chunk_callback=send_chunk,
+            log_callback=log_cb
+        )
         
         if out_lines > 0:
-            if chunk_buffer:
-                chunk = "\n".join(chunk_buffer)
-                chunk_html = html.escape(chunk)
-                if len(chunk_html) > 4000:
-                    chunk_html = chunk_html[:4000] + "..."
-                try:
-                    await update.message.reply_text(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>", parse_mode='HTML')
-                except Exception as e:
-                    pass
             await update.message.reply_text(f"✅ Finished Gemini CLI execution.")
         else:
             response = "\n".join(all_output)
