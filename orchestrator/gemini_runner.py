@@ -6,7 +6,7 @@ import subprocess
 import html
 import traceback
 
-async def run_gemini_cli_stream(instruction: str, model: str, out_lines: int, send_chunk_callback, log_callback=None):
+async def run_gemini_cli_stream(instruction: str, model: str, out_lines: int, send_chunk_callback, log_callback=None, cwd=None):
     """
     Executes the Gemini CLI program with streaming outputs, robust error handling, 
     and cross-platform PTY workarounds.
@@ -58,6 +58,7 @@ async def run_gemini_cli_stream(instruction: str, model: str, out_lines: int, se
                     stdin=subprocess.PIPE,
                     text=True,
                     bufsize=1,
+                    cwd=cwd,
                     env=env,
                     startupinfo=startupinfo,
                     creationflags=subprocess.CREATE_NEW_CONSOLE
@@ -114,6 +115,7 @@ async def run_gemini_cli_stream(instruction: str, model: str, out_lines: int, se
             # Mac/Linux run via exec securely
             process = await asyncio.create_subprocess_exec(
                 *cmd_args,
+                cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )

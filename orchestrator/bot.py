@@ -341,7 +341,8 @@ async def handle_fix_data(update: Update, args: dict):
             model="gemini-2.5-flash", # fast model for fixing data
             out_lines=10,
             send_chunk_callback=send_chunk,
-            log_callback=print
+            log_callback=print,
+            cwd=data_dir
         )
         
         await update.message.reply_text(f"✅ Gemini CLI finished working on fixes.")
