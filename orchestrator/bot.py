@@ -279,55 +279,55 @@ async def handle_get_file(update: Update, args: dict):
     else:
         await update.message.reply_text(f"Error: File '{path}' not found in project {pid}.")
 async def handle_fix_data(update: Update, args: dict):
-    pid = args.get('pid', '').upper()
-    if not pid:
-        await update.message.reply_text("Error: -pid is required.")
-        return
-
     data_dir = get_data_dir()
-    project_dir = os.path.join(data_dir, "projects", pid)
+    projects_dir = os.path.join(data_dir, "projects")
     
-    if not os.path.exists(project_dir):
-        await update.message.reply_text(f"Error: Project {pid} not found.")
+    if not os.path.exists(projects_dir):
+        await update.message.reply_text("Data directory not found.")
         return
 
     errors = []
     
-    project_json_path = os.path.join(project_dir, "project.json")
-    if os.path.exists(project_json_path):
-        try:
-            with open(project_json_path, "r", encoding="utf-8") as f:
-                json.load(f)
-        except Exception as e:
-            errors.append((project_json_path, str(e)))
-            
-    tasks_dir = os.path.join(project_dir, "tasks")
-    if os.path.exists(tasks_dir):
-        for tid in os.listdir(tasks_dir):
-            task_dir = os.path.join(tasks_dir, tid)
-            if os.path.isdir(task_dir):
-                task_json_path = os.path.join(task_dir, "task.json")
-                if os.path.exists(task_json_path):
-                    try:
-                        with open(task_json_path, "r", encoding="utf-8") as f:
-                            json.load(f)
-                    except Exception as e:
-                        errors.append((task_json_path, str(e)))
+    for pid in os.listdir(projects_dir):
+        project_dir = os.path.join(projects_dir, pid)
+        if not os.path.isdir(project_dir):
+            continue
+
+        project_json_path = os.path.join(project_dir, "project.json")
+        if os.path.exists(project_json_path):
+            try:
+                with open(project_json_path, "r", encoding="utf-8") as f:
+                    json.load(f)
+            except Exception as e:
+                errors.append((project_json_path, str(e)))
+                
+        tasks_dir = os.path.join(project_dir, "tasks")
+        if os.path.exists(tasks_dir):
+            for tid in os.listdir(tasks_dir):
+                task_dir = os.path.join(tasks_dir, tid)
+                if os.path.isdir(task_dir):
+                    task_json_path = os.path.join(task_dir, "task.json")
+                    if os.path.exists(task_json_path):
+                        try:
+                            with open(task_json_path, "r", encoding="utf-8") as f:
+                                json.load(f)
+                        except Exception as e:
+                            errors.append((task_json_path, str(e)))
 
     if not errors:
-        await update.message.reply_text(f"✅ All json files in project {pid} are valid.")
+        await update.message.reply_text("✅ All json files in all projects are valid.")
         return
 
     # Found errors, trigger gcli
     error_details = "\n".join([f"- {path}: {err}" for path, err in errors])
     prompt = (
-        f"Check the following JSON files in the project {pid} which have formatting errors:\n"
+        f"Check the following JSON files across the system which have formatting errors:\n"
         f"{error_details}\n\n"
         "Please fix the JSON format errors and update the files. Ensure the output is valid JSON."
     )
     
     # Send an initial message
-    await update.message.reply_text(f"Found {len(errors)} JSON errors in project {pid}. Invoking Gemini CLI to fix...")
+    await update.message.reply_text(f"Found {len(errors)} JSON errors. Invoking Gemini CLI to fix...")
     
     try:
         async def send_chunk(chunk_html):
@@ -362,7 +362,7 @@ COMMAND_MAP = {
     '/get-project': handle_get_project,
     '/get-task': handle_get_task,
     '/get-file': handle_get_file,
-    '/fix_data': handle_fix_data,
+    '/fix-data': handle_fix_data,
 }
 
 async def handle_multi_line_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -485,7 +485,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/new-project -pid [PID] -title \"[Title]\" -des \"[Description]\"\n"
         "/update-project -pid [PID] -field [Field] -val \"[Value]\"\n"
         "/del-project -pid [PID]\n"
-        "/fix_data -pid [PID]\n\n"
+        "/fix-data\n\n"
         "*Tasks:*\n"
         "/get-task -pid [PID] -tid [TID]\n"
         "/new-task -pid [PID] -ptid [ParentTID] -title \"[Title]\" -des \"[Description]\"\n"

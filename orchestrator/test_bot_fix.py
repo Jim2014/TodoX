@@ -28,11 +28,11 @@ async def run_test():
     with open(os.path.join(test_data_dir, "projects", test_pid, "tasks", "TESTBOT-1", "task.json"), "w") as f:
         json.dump({"title": "Test Task 1"}, f)
     
-    # 1. Test project not found
-    args = {"pid": "NOTFOUND"}
-    with patch('orchestrator.bot.get_data_dir', return_value=test_data_dir):
+    # 1. Test data dir not found
+    args = {}
+    with patch('orchestrator.bot.get_data_dir', return_value="./nonexistent_data"):
         await handle_fix_data(update, args)
-        update.message.reply_text.assert_called_with("Error: Project NOTFOUND not found.")
+        update.message.reply_text.assert_called_with("Data directory not found.")
         
     # 2. Test everything valid. Remove the bad files from step 1 first.
     with open(os.path.join(test_data_dir, "projects", test_pid, "project.json"), "w") as f:
@@ -40,11 +40,11 @@ async def run_test():
     with open(os.path.join(test_data_dir, "projects", test_pid, "tasks", "TESTBOT-1", "task.json"), "w") as f:
         json.dump({"title": "Test Task 1"}, f)
         
-    args = {"pid": test_pid}
+    args = {}
     with patch('orchestrator.bot.get_data_dir', return_value=test_data_dir), \
          patch.object(bot_module, 'run_gemini_cli_stream', new_callable=AsyncMock) as mock_exec:
         await handle_fix_data(update, args)
-        update.message.reply_text.assert_called_with(f"✅ All json files in project {test_pid} are valid.")
+        update.message.reply_text.assert_called_with("✅ All json files in all projects are valid.")
 
     update.message.reply_text.reset_mock()
     if isinstance(mock_exec, AsyncMock):
@@ -66,7 +66,7 @@ async def run_test():
         await handle_fix_data(update, args)
         
         # Verify initial message was sent
-        update.message.reply_text.assert_any_call(f"Found 1 JSON errors in project {test_pid}. Invoking Gemini CLI to fix...")
+        update.message.reply_text.assert_any_call("Found 1 JSON errors. Invoking Gemini CLI to fix...")
         
         # Verify gemini cmd
         mock_exec.assert_called_once()
