@@ -6,3 +6,6 @@ python-telegram-bot==21.3
 python-dotenv==1.0.1
 watchdog==4.0.1
 markdown==3.10.2
+python-multipart>=0.0.9
+faster-whisper>=1.0.0
+edge-tts>=7.0.0

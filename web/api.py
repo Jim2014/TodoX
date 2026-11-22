@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import tempfile
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 
 from harness.registry import create_default_registry
 from harness.router import HarnessRouter
+from orchestrator.briefing import build_project_briefing, generate_ai_project_briefing
+from orchestrator.chat_router import handle_project_chat
 from orchestrator.event_bus import (
     enqueue_control_command,
     get_worker_runtime,
@@ -36,10 +39,12 @@ from orchestrator.storage import (
     update_project,
     update_task,
 )
+from orchestrator.voice import synthesize_voice_mp3, transcribe_voice
 from web.models import (
     ApproveRequest,
     CommentCreate,
     CommentUpdate,
+    ProjectChatRequest,
     ProjectCreate,
     ProjectUpdate,
     SteerRequest,
@@ -214,6 +219,7 @@ def api_get_project(pid: str):
         "runtime": runtime.get(clean_pid),
         "paused": clean_pid in set(st.get("paused_projects", [])),
         "effective_profile": harness_router.resolve_profile(project_task=root).to_dict(),
+        "briefing": build_project_briefing(clean_pid),
         "system_state": st,
     }
 
@@ -423,6 +429,94 @@ def api_steer_worker(pid: str, data: SteerRequest):
     enqueue_control_command("steer", clean_pid, msg)
     publish_event("control_action", pid=clean_pid, message=f"Steering queued: {msg[:100]}")
     return {"status": "queued", "action": "steer", "pid": clean_pid}
+
+
+@router.get("/api/projects/{pid}/briefing")
+def api_get_project_briefing(pid: str):
+    """Return zero-latency project briefing combining board stats, latest ticket note, and cache."""
+    clean_pid = pid.strip().upper()
+    briefing = build_project_briefing(clean_pid)
+    if not briefing:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return briefing
+
+
+@router.post("/api/projects/{pid}/briefing/refresh")
+async def api_refresh_project_briefing(pid: str):
+    """Run read-only AI executive summarization pass for a project and refresh cache."""
+    clean_pid = pid.strip().upper()
+    if not load_task(clean_pid, f"{clean_pid}-0"):
+        raise HTTPException(status_code=404, detail="Project not found")
+    briefing = await generate_ai_project_briefing(clean_pid)
+    return briefing
+
+
+@router.get("/api/projects/{pid}/briefing/audio")
+async def api_project_briefing_audio(pid: str):
+    """Synthesize spoken MP3 briefing for in-browser playback."""
+    clean_pid = pid.strip().upper()
+    briefing = build_project_briefing(clean_pid)
+    if not briefing:
+        raise HTTPException(status_code=404, detail="Project not found")
+    spoken = str(briefing.get("spoken_text") or briefing.get("summary_text") or "").strip()
+    audio_path = await synthesize_voice_mp3(spoken)
+    if not audio_path or not audio_path.is_file():
+        raise HTTPException(status_code=503, detail="Voice synthesis unavailable")
+    return FileResponse(audio_path, media_type="audio/mpeg", filename=f"{clean_pid}_briefing.mp3")
+
+
+@router.post("/api/projects/{pid}/chat")
+async def api_project_chat(pid: str, data: ProjectChatRequest):
+    """Route a project-scoped natural-language command into briefing, ticket creation, or worker control."""
+    clean_pid = pid.strip().upper()
+    if not load_task(clean_pid, f"{clean_pid}-0"):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not (data.msg or "").strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    return await handle_project_chat(clean_pid, data.msg, source="web", auto_run=data.auto_run)
+
+
+@router.post("/api/projects/{pid}/voice")
+async def api_project_voice(pid: str, file: UploadFile = File(...)):
+    """Transcribe an uploaded browser voice recording and execute it as a project command."""
+    clean_pid = pid.strip().upper()
+    if not load_task(clean_pid, f"{clean_pid}-0"):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    voice_dir = Path(get_data_dir()) / "runtime" / "voice"
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "recording.webm").suffix or ".webm"
+    raw_bytes = await file.read()
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio upload")
+
+    fd, temp_name = tempfile.mkstemp(dir=str(voice_dir), prefix=f"web_{clean_pid}_", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw_bytes)
+        transcript, detected_lang = await transcribe_voice(temp_name)
+    finally:
+        if os.path.exists(temp_name):
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+
+    if not transcript.strip():
+        return {
+            "ok": False,
+            "pid": clean_pid,
+            "transcript": "",
+            "language": detected_lang,
+            "reply": "Could not detect speech in the recording. Please try speaking closer to the microphone.",
+        }
+
+    result = await handle_project_chat(clean_pid, transcript, source="web_voice", auto_run=True)
+    return {
+        "transcript": transcript,
+        "language": detected_lang,
+        **result,
+    }
 
 
 @router.get("/api/system_state")

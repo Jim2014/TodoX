@@ -62,6 +62,11 @@ class ApproveRequest(BaseModel):
     comment: Optional[str] = None
 
 
+class ProjectChatRequest(BaseModel):
+    msg: str
+    auto_run: bool = True
+
+
 if __name__ == "__main__":
     p = ProjectCreate(pid="DEMO", title="Demo", desc="Check")
     assert p.pid == "DEMO"

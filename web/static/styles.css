@@ -1214,3 +1214,125 @@ dialog::backdrop {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Briefing Card & Conversational Voice Bar */
+.briefing-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.briefing-card,
+.chat-voice-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.briefing-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.briefing-title-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.briefing-title-group h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.briefing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.briefing-summary {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  max-height: 185px;
+  overflow-y: auto;
+}
+
+.attention-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.attention-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+}
+
+.briefing-audio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.briefing-audio-row audio {
+  height: 32px;
+  width: 100%;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.chat-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+}
+
+.btn-recording {
+  background: var(--danger);
+  color: #ffffff;
+  animation: pulseGlow 1.2s infinite;
+}
+
+.chat-reply-box {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+}
+
+@media (max-width: 1020px) {
+  .briefing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

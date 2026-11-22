@@ -172,6 +172,44 @@ class TelegramClient:
         res = await self._post("getFile", {"file_id": file_id})
         return res if isinstance(res, dict) else {}
 
+    async def download_file(
+        self,
+        file_path: str,
+        destination: Path | str,
+        timeout: float = 60.0,
+    ) -> Path:
+        """Download a Telegram file by file_path to local disk."""
+        client = await self.get_client()
+        url = f"{self.file_base_url}/{file_path.lstrip('/')}"
+        dest_path = Path(destination).resolve()
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            resp = await client.get(url, timeout=timeout)
+            resp.raise_for_status()
+            dest_path.write_bytes(resp.content)
+            return dest_path
+        except httpx.RequestError as exc:
+            logger.error("HTTP error downloading Telegram file %s: %s", file_path, format_exception_brief(exc))
+            raise
+
+    async def download_file_by_id(
+        self,
+        file_id: str,
+        destination_dir: Path | str,
+        filename_prefix: str = "voice",
+    ) -> Tuple[Path, Dict[str, Any]]:
+        """Resolve Telegram file metadata by ID and download to destination_dir."""
+        file_info = await self.get_file(file_id)
+        remote_path = str(file_info.get("file_path") or "").strip()
+        if not remote_path:
+            raise ValueError(f"Missing file_path for Telegram file_id={file_id}")
+        ext = Path(remote_path).suffix or ".oga"
+        uid = str(file_info.get("file_unique_id") or "audio")
+        filename = f"{filename_prefix}_{uid}_{int(time.time())}{ext}"
+        dest = Path(destination_dir) / filename
+        saved = await self.download_file(remote_path, dest)
+        return saved, file_info
+
     async def get_updates(
         self,
         offset: Optional[int] = None,
@@ -372,6 +410,70 @@ class TelegramClient:
             desc = redact_bot_token(str(res_json.get("description", "Unknown error")))
             if parse_mode and ("can't parse entities" in desc.lower() or "tag" in desc.lower()):
                 logger.warning("Telegram rejected HTML caption in sendDocument (%s); falling back to stripped plain text", desc)
+                data.pop("parse_mode", None)
+                if caption:
+                    data["caption"] = strip_telegram_html(caption)
+                resp = await client.post(url, data=data, files=files, timeout=60.0)
+                res_json = resp.json()
+                if res_json.get("ok"):
+                    return res_json.get("result", {})
+            raise TelegramAPIError(err_code, desc)
+
+        result = res_json.get("result", {})
+        return result if isinstance(result, dict) else {}
+
+    async def send_voice(
+        self,
+        chat_id: int,
+        voice: bytes | str | Path,
+        filename: str = "voice.ogg",
+        caption: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
+        duration: Optional[int] = None,
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        disable_notification: bool = False,
+    ) -> Dict[str, Any]:
+        """Upload a native Telegram voice note (.ogg opus) via multipart/form-data."""
+        client = await self.get_client()
+        url = f"{self.base_url}/sendVoice"
+
+        if isinstance(voice, Path):
+            voice_bytes = voice.read_bytes()
+        elif isinstance(voice, str):
+            if os.path.isfile(voice):
+                voice_bytes = Path(voice).read_bytes()
+            else:
+                voice_bytes = voice.encode("utf-8")
+        else:
+            voice_bytes = voice
+
+        data: Dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+            if parse_mode:
+                data["parse_mode"] = parse_mode
+        if duration is not None:
+            data["duration"] = str(duration)
+        if reply_to_message_id:
+            data["reply_to_message_id"] = str(reply_to_message_id)
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+        if disable_notification:
+            data["disable_notification"] = "true"
+
+        files = {"voice": (filename, voice_bytes, "audio/ogg")}
+        try:
+            resp = await client.post(url, data=data, files=files, timeout=60.0)
+            res_json = resp.json()
+        except httpx.RequestError as exc:
+            logger.error("HTTP error calling sendVoice: %s", format_exception_brief(exc))
+            raise
+
+        if not res_json.get("ok"):
+            err_code = res_json.get("error_code", resp.status_code)
+            desc = redact_bot_token(str(res_json.get("description", "Unknown error")))
+            if parse_mode and ("can't parse entities" in desc.lower() or "tag" in desc.lower()):
                 data.pop("parse_mode", None)
                 if caption:
                     data["caption"] = strip_telegram_html(caption)

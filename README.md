@@ -11,7 +11,11 @@ TodoX is an AI-driven project management and development orchestrator built on a
 - **Upgraded Async Telegram Interface (`telegram_ui/`)**:
   - Lightweight async `httpx` client (`TelegramClient`) with bot-token redaction, non-blocking `429` rate-limit protection for live edits, `409` polling backoff, and HTML-stripped plain-text fallback.
   - **Live Worker Progress Cards**: Streams expandable tool traces (`<blockquote expandable>`), elapsed duration, token usage, adaptive throttling, raw HTML/protocol masking during live edits, auto-exported mobile HTML reports, clean `/stop` delivery suppression, and one-tap **Stop** / **Live Log** / **Approve & Resume** / **Retry** buttons directly in Telegram.
-  - **Interactive Controls + Reply-to-Card UX**: Inline keyboards for `/projects`, `/status`, `/harness`, `/model`, `/effort`, `/permissions`, `/pause`, `/resume`, and `/stop`, plus replying directly to any Project or Task card to attach Admin comments.
+  - **Interactive Controls + Reply-to-Card UX**: Inline keyboards for `/projects`, `/use`, `/summary`, `/status`, `/harness`, `/model`, `/effort`, `/permissions`, `/pause`, `/resume`, and `/stop`, plus replying directly to any Project or Task card to attach Admin comments.
+  - **Voice Notes & Conversational Project Chat (`orchestrator/voice.py`, `orchestrator/briefing.py`, `orchestrator/chat_router.py`)**:
+    - Two-layer **Current Project Briefing** card on `/use <PID>` or project switch (`✨ AI Summary` read-only executive synthesis + `🔊 Voice Brief` spoken TTS audio + instant `worker_step` / latest-ticket fallback).
+    - Multilingual Speech-to-Text (`faster-whisper`) and Text-to-Speech (`edge-tts` / `ffmpeg`, with macOS `say` / browser speech fallback) across both Telegram voice notes and the Web UI **Voice & Chat Command Bar**.
+    - Shared natural-language command router (`handle_project_chat`) to summarize status, create & run tickets, add comments & re-run, approve `need_confirm` tickets, or stop/steer running workers.
   - **Offline Mobile HTML File Viewers**: Renders Markdown, diffs, and source code into self-contained dark/light HTML reports without external CDN dependencies.
   - **Deny-by-Default Security**: Enforces `ALLOWED_CHAT_IDS` / `ADMIN_CHAT_ID` on all incoming messages and inline callbacks (`ALLOW_ALL_CHATS=false` by default).
   - **Batch VOP Compatibility**: Retains full support for multi-line VOP commands (`/new-project`, `/new-task`, `/update-task`, `/new-comment`, `/get-project`, `/get-file`, `/fix-data`).
@@ -53,6 +57,11 @@ This project uses the Conda environment named **`todox`** (defined in `environme
    MAX_CONCURRENT_WORKERS=2
    WEB_ENABLED=true
    WEB_PORT=8899
+
+   # Voice STT/TTS
+   WHISPER_MODEL_SIZE=base
+   TTS_VOICE_EN=en-US-JennyNeural
+   TTS_VOICE_ZH=zh-CN-XiaoxiaoNeural
    ```
 
 ## Usage
@@ -67,6 +76,8 @@ This project uses the Conda environment named **`todox`** (defined in `environme
 2. Primary Telegram Commands:
    - `/help` — Show interactive command center
    - `/projects` — Browse, inspect, pause, or assign projects via inline cards
+   - `/use [PID]` — Switch active project for conversational text & voice messages (shows Current Project Briefing)
+   - `/summary [PID]` — Generate a fresh read-only AI executive briefing for the active or target project
    - `/status` & `/pin` — View or pin the live orchestrator dashboard
    - `/harness`, `/model`, `/effort`, `/permissions` — Configure active CLI harness, model, reasoning effort, and sandbox preset
    - `/pause [PID]` / `/resume [PID]` — Pause or resume watcher scheduling
@@ -80,7 +91,7 @@ Every module can be verified independently from the command line without startin
 
 ```bash
 # Run isolated unit & integration tests
-conda run -n todox python -m unittest tests/test_harness_types.py tests/test_agy_harness.py tests/test_harness_router_and_state.py tests/test_worker_and_validation.py tests/test_telegram_client_and_formatter.py tests/test_telegram_bot_and_notifier.py tests/test_async_watcher.py tests/test_web_kanban_and_sse.py -v
+conda run -n todox python -m unittest tests/test_harness_types.py tests/test_agy_harness.py tests/test_harness_router_and_state.py tests/test_worker_and_validation.py tests/test_telegram_client_and_formatter.py tests/test_telegram_bot_and_notifier.py tests/test_async_watcher.py tests/test_web_kanban_and_sse.py tests/test_voice_briefing_and_chat.py -v
 
 # Run standalone module checks
 conda run -n todox python -m harness.types
@@ -97,6 +108,9 @@ conda run -n todox python -m telegram_ui.bot
 conda run -n todox python -m orchestrator.state
 conda run -n todox python -m orchestrator.storage
 conda run -n todox python -m orchestrator.event_bus
+conda run -n todox python -m orchestrator.voice
+conda run -n todox python -m orchestrator.briefing
+conda run -n todox python -m orchestrator.chat_router
 conda run -n todox python -m orchestrator.worker
 conda run -n todox python -m orchestrator.watcher
 conda run -n todox python -m web.models

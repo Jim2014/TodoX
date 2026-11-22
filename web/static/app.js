@@ -27,6 +27,11 @@
     eventSource: null,
     refreshTimer: null,
     dragTid: "",
+    chatReply: null,
+    audioUrl: "",
+    isRecording: false,
+    mediaRecorder: null,
+    recordChunks: [],
   };
 
   function escapeHtml(raw) {
@@ -473,6 +478,92 @@
     return `/project/${encodeURIComponent(pid)}/files/${encodedPath}${suffix}`;
   }
 
+  function buildBriefingAndChatHtml(payload) {
+    const pid = payload.pid;
+    const brf = payload.briefing || {};
+    const srcMap = {
+      ai_refresh: "AI Executive Summary",
+      worker_step: "Latest Worker Step",
+      latest_ticket: `Latest Ticket${brf.latest_ticket_update?.tid ? " (" + brf.latest_ticket_update.tid + ")" : ""}`,
+      project_goal: "Project Goal",
+    };
+    const srcLabel = srcMap[brf.summary_source] || "Summary";
+    const staleTag = brf.is_ai_summary_stale ? ' <span class="badge">Newer ticket updates</span>' : "";
+    const attention = brf.attention_tasks || [];
+    const attentionHtml = attention.length
+      ? `<div class="attention-strip">` +
+        `<strong style="font-size:12px;">Needs Attention:</strong>` +
+        attention
+          .slice(0, 4)
+          .map(
+            (item) =>
+              `<span class="attention-pill">` +
+              `<a href="#inspect" data-action="open-task" data-tid="${escapeHtml(item.id)}" class="mono">${escapeHtml(item.id)}</a>` +
+              `<span>${escapeHtml(item.status)}</span>` +
+              (item.status === "need_confirm"
+                ? `<button type="button" class="btn btn-xs btn-success" data-action="approve-task" data-tid="${escapeHtml(item.id)}">Approve</button>`
+                : "") +
+              `</span>`
+          )
+          .join("") +
+        `</div>`
+      : "";
+
+    const audioHtml = appState.audioUrl
+      ? `<div class="briefing-audio-row"><audio controls autoplay src="${escapeHtml(appState.audioUrl)}"></audio></div>`
+      : "";
+
+    const chatReply = appState.chatReply;
+    const replyHtml = chatReply
+      ? `<div class="chat-reply-box">` +
+        (chatReply.transcript ? `<div class="muted" style="margin-bottom:4px;">🎙️ "${escapeHtml(chatReply.transcript)}"</div>` : "") +
+        `<div class="md-rendered">${renderMarkdown(chatReply.reply || "")}</div>` +
+        (chatReply.tid
+          ? `<div style="margin-top:6px;"><button type="button" class="btn btn-xs btn-secondary" data-action="open-task" data-tid="${escapeHtml(chatReply.tid)}">Inspect ${escapeHtml(chatReply.tid)}</button></div>`
+          : "") +
+        `</div>`
+      : "";
+
+    const voiceSupported = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+    const micBtnLabel = appState.isRecording ? "⏹ Stop Mic" : "🎙️ Voice";
+    const micClass = appState.isRecording ? "btn btn-sm btn-recording" : "btn btn-sm btn-secondary";
+
+    return (
+      `<section class="briefing-grid">` +
+      `<div class="briefing-card">` +
+      `<div class="briefing-head">` +
+      `<div class="briefing-title-group">` +
+      `<h2>Current Project Briefing</h2>` +
+      `<span class="badge">${escapeHtml(srcLabel)}</span>` +
+      `${staleTag}` +
+      `<span class="muted" style="font-size:11.5px;">${brf.completed_tasks ?? 0}/${brf.total_tasks ?? 0} done (${brf.progress_pct ?? 0}%)</span>` +
+      `</div>` +
+      `<div class="briefing-actions">` +
+      `<button type="button" class="btn btn-xs btn-secondary" data-action="refresh-briefing" data-pid="${escapeHtml(pid)}">✨ AI Summary</button>` +
+      `<button type="button" class="btn btn-xs btn-secondary" data-action="play-briefing-audio" data-pid="${escapeHtml(pid)}">🔊 Listen</button>` +
+      `</div>` +
+      `</div>` +
+      `${attentionHtml}` +
+      `<div class="briefing-summary md-rendered">${renderMarkdown(brf.summary_text || "")}</div>` +
+      `${audioHtml}` +
+      `</div>` +
+      `<div class="chat-voice-card">` +
+      `<div class="briefing-head">` +
+      `<div class="briefing-title-group"><h2>Voice &amp; Chat Command Bar</h2><span class="badge mono">${escapeHtml(pid)}</span></div>` +
+      `<label class="btn btn-xs btn-ghost" title="Upload an audio recording for transcription" style="cursor:pointer;">📁 Audio File<input id="voice-file-input" type="file" accept="audio/*" hidden></label>` +
+      `</div>` +
+      `<p class="muted" style="margin:0;font-size:12px;">Speak or type in any language to ask for status, create &amp; run a ticket, approve reviews, or steer the active worker.</p>` +
+      `<form id="project-chat-form" class="chat-form" data-pid="${escapeHtml(pid)}">` +
+      `<input name="msg" placeholder="e.g. Add undo support and run AI, or ask what changed..." autocomplete="off">` +
+      `<button type="submit" class="btn btn-sm btn-primary">Send</button>` +
+      `<button type="button" class="${micClass}" data-action="toggle-mic-record" data-pid="${escapeHtml(pid)}" title="${voiceSupported ? "Record microphone command" : "Requires HTTPS or localhost; click to upload audio instead"}">${micBtnLabel}</button>` +
+      `</form>` +
+      `${replyHtml}` +
+      `</div>` +
+      `</section>`
+    );
+  }
+
   function renderProjectWorkspace() {
     const payload = appState.projectPayload;
     if (!payload) return;
@@ -578,7 +669,7 @@
         `</div>`;
     }
 
-    root.innerHTML = `${heroHtml}${tabsHtml}${bodyHtml}`;
+    root.innerHTML = `${heroHtml}${buildBriefingAndChatHtml(payload)}${tabsHtml}${bodyHtml}`;
     const feed = document.getElementById("live-log-feed");
     if (feed && appState.autoScroll) feed.scrollTop = feed.scrollHeight;
   }
@@ -837,6 +928,82 @@
     });
   }
 
+  async function uploadVoiceBlob(pid, blob, filename) {
+    const fd = new FormData();
+    fd.append("file", blob, filename || "voice.webm");
+    const res = await fetch(`/api/projects/${encodeURIComponent(pid)}/voice`, {
+      method: "POST",
+      body: fd,
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(`Voice upload failed (HTTP ${res.status})`);
+    }
+    if (!res.ok) {
+      throw new Error(data?.detail || `HTTP ${res.status}`);
+    }
+    appState.chatReply = data;
+    if (data?.briefing && appState.projectPayload) {
+      appState.projectPayload.briefing = data.briefing;
+    }
+    if (data?.action === "briefing" || data?.action === "ai_summary") {
+      appState.audioUrl = `/api/projects/${encodeURIComponent(pid)}/briefing/audio?t=${Date.now()}`;
+    }
+    await loadCurrentViewData(false);
+    showToast(`Voice processed (${data.action || "ok"})`);
+  }
+
+  async function toggleMicRecording(pid) {
+    if (appState.isRecording && appState.mediaRecorder) {
+      appState.isRecording = false;
+      appState.mediaRecorder.stop();
+      renderProjectWorkspace();
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      showToast("Microphone requires HTTPS or localhost; use Audio File upload instead.", true);
+      document.getElementById("voice-file-input")?.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks = [];
+      const recorder = new MediaRecorder(stream);
+      appState.mediaRecorder = recorder;
+      appState.recordChunks = chunks;
+      appState.isRecording = true;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((tr) => tr.stop());
+        appState.mediaRecorder = null;
+        appState.isRecording = false;
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size > 0) {
+          try {
+            showToast("Transcribing voice command...");
+            await uploadVoiceBlob(pid, blob, "mic-recording.webm");
+          } catch (err) {
+            showToast(err.message, true);
+            renderProjectWorkspace();
+          }
+        } else {
+          renderProjectWorkspace();
+        }
+      };
+      recorder.start();
+      renderProjectWorkspace();
+      showToast("Recording... click Stop Mic when finished");
+    } catch (err) {
+      appState.isRecording = false;
+      showToast(`Microphone error: ${err.message}`, true);
+    }
+  }
+
   /* Event Delegation */
   function setupEventHandlers() {
     const taskDrawer = document.getElementById("task-drawer");
@@ -965,6 +1132,41 @@
             showToast(`Commented & queued ${tid} for AI`);
             await openTaskInspector(tid);
             scheduleBoardRefresh();
+          } else if (act === "refresh-briefing") {
+            actionEl.disabled = true;
+            actionEl.textContent = "Generating...";
+            try {
+              const res = await apiJson("POST", `/api/projects/${encodeURIComponent(pid)}/briefing/refresh`, {});
+              const refreshed = res?.briefing || (res?.pid ? res : null);
+              if (refreshed && appState.projectPayload) {
+                appState.projectPayload.briefing = refreshed;
+              }
+              showToast(`AI summary updated for ${pid}`);
+              renderProjectWorkspace();
+            } finally {
+              actionEl.disabled = false;
+            }
+          } else if (act === "play-briefing-audio") {
+            const brf = appState.projectPayload?.briefing || {};
+            const spoken = String(brf.spoken_text || brf.summary_text || "").trim();
+            appState.audioUrl = `/api/projects/${encodeURIComponent(pid)}/briefing/audio?t=${Date.now()}`;
+            renderProjectWorkspace();
+            const audioEl = document.querySelector(".briefing-audio-row audio");
+            if (audioEl) {
+              audioEl.onerror = () => {
+                if ("speechSynthesis" in window && spoken) {
+                  const utter = new SpeechSynthesisUtterance(spoken.slice(0, 600));
+                  window.speechSynthesis.cancel();
+                  window.speechSynthesis.speak(utter);
+                  showToast("Playing via browser speech fallback");
+                } else {
+                  showToast("Briefing audio unavailable", true);
+                }
+              };
+              audioEl.play().catch(() => {});
+            }
+          } else if (act === "toggle-mic-record") {
+            await toggleMicRecording(pid);
           }
         } catch (err) {
           showToast(err.message, true);
@@ -991,6 +1193,18 @@
     });
 
     document.addEventListener("change", (ev) => {
+      if (ev.target.id === "voice-file-input") {
+        const file = ev.target.files?.[0];
+        if (!file) return;
+        const pid = appState.pid;
+        showToast(`Uploading ${file.name} for transcription...`);
+        uploadVoiceBlob(pid, file, file.name)
+          .catch((err) => showToast(err.message, true))
+          .finally(() => {
+            ev.target.value = "";
+          });
+        return;
+      }
       if (ev.target.name === "default_harness" && ev.target.closest("#settings-form")) {
         const modelSelect = document.querySelector('#settings-form select[name="default_model"]');
         const modelsList = (appState.harnessesPayload?.models && appState.harnessesPayload.models[ev.target.value]) || [];
@@ -1122,6 +1336,28 @@
           document.getElementById("settings-dialog")?.close();
           showToast("Orchestrator settings updated");
           await loadCurrentViewData(false);
+        } else if (form.id === "project-chat-form") {
+          const pid = form.dataset.pid || appState.pid;
+          const input = form.querySelector('input[name="msg"]');
+          const message = String(input?.value || "").trim();
+          if (!message) return;
+          const submitBtn = form.querySelector('button[type="submit"]');
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const res = await apiJson("POST", `/api/projects/${encodeURIComponent(pid)}/chat`, { msg: message });
+            if (input) input.value = "";
+            appState.chatReply = res;
+            if (res?.briefing && appState.projectPayload) {
+              appState.projectPayload.briefing = res.briefing;
+            }
+            if (res?.action === "briefing" || res?.action === "ai_summary") {
+              appState.audioUrl = `/api/projects/${encodeURIComponent(pid)}/briefing/audio?t=${Date.now()}`;
+            }
+            await loadCurrentViewData(false);
+            showToast(`Command handled (${res.action || "ok"})`);
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
         }
       } catch (err) {
         showToast(err.message, true);

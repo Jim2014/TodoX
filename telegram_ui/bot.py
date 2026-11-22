@@ -23,6 +23,8 @@ from harness import (
     create_default_registry,
     format_event_log_line,
 )
+from orchestrator.briefing import build_project_briefing, generate_ai_project_briefing
+from orchestrator.chat_router import handle_project_chat
 from orchestrator.models import Task
 from orchestrator.state import SystemState, state as default_state
 from orchestrator.storage import (
@@ -40,10 +42,11 @@ from orchestrator.storage import (
     update_project,
     update_task,
 )
+from orchestrator.voice import distill_spoken_briefing, synthesize_voice_ogg, transcribe_voice
 
 from .client import TelegramAPIError, TelegramClient, format_exception_brief
 from .file_renderers import render_file_to_html
-from .formatter import escape_html, format_pinned_dashboard, wrap_raw_html_for_mobile
+from .formatter import escape_html, format_pinned_dashboard, markdown_to_telegram_html, wrap_raw_html_for_mobile
 from .keyboards import (
     BOT_COMMANDS,
     build_effort_keyboard,
@@ -54,6 +57,7 @@ from .keyboards import (
     build_model_keyboard,
     build_permissions_keyboard,
     build_pinned_banner_keyboard,
+    build_project_briefing_card,
     build_project_card,
     build_projects_keyboard,
     build_task_card,
@@ -136,6 +140,8 @@ class TodoXTelegramBot:
         self._card_targets: Dict[Tuple[int, int], Tuple[str, str]] = {}
         self._file_lists_cache: Dict[str, List[str]] = {}
         self._chat_edit_backoff_until: Dict[int, float] = {}
+        self._active_project_by_chat: Dict[int, str] = self._load_chat_state()
+        self._intent_classifier: Optional[Any] = None
         self._vop_handlers: Dict[str, Any] = {
             "/new-project": self._vop_new_project,
             "/new-task": self._vop_new_task,
@@ -359,6 +365,313 @@ class TodoXTelegramBot:
         self.running = False
         await self.client.close()
 
+    def _chat_state_path(self) -> Path:
+        """Return path for persisting active project selection per Telegram chat."""
+        return Path(get_data_dir()) / "telegram_chat_state.json"
+
+    def _load_chat_state(self) -> Dict[int, str]:
+        """Load persisted active project mapping {chat_id: pid}."""
+        path = self._chat_state_path()
+        if not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                result: Dict[int, str] = {}
+                for k, v in raw.items():
+                    if v:
+                        try:
+                            result[int(k)] = str(v).strip().upper()
+                        except (TypeError, ValueError):
+                            pass
+                return result
+        except Exception as exc:
+            logger.warning("Failed to load Telegram chat state: %s", exc)
+        return {}
+
+    def _save_chat_state(self) -> None:
+        """Persist active project mapping atomically."""
+        path = self._chat_state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            payload = {str(k): v for k, v in self._active_project_by_chat.items()}
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception as exc:
+            logger.warning("Failed to save Telegram chat state: %s", exc)
+
+    def _get_active_project(self, chat_id: int) -> Optional[str]:
+        """Return the active project ID for chat_id if it still exists."""
+        cid = int(chat_id)
+        pid = self._active_project_by_chat.get(cid)
+        if not pid:
+            return None
+        if load_task(pid, f"{pid}-0") is None:
+            self._active_project_by_chat.pop(cid, None)
+            self._save_chat_state()
+            return None
+        return pid
+
+    def _set_active_project(self, chat_id: int, pid: Optional[str]) -> None:
+        """Persist or clear the active project ID for chat_id."""
+        cid = int(chat_id)
+        if not pid:
+            self._active_project_by_chat.pop(cid, None)
+        else:
+            self._active_project_by_chat[cid] = str(pid).strip().upper()
+        self._save_chat_state()
+
+    async def _send_project_picker(
+        self,
+        chat_id: int,
+        reply_to_message_id: Optional[int] = None,
+        notice: str = "",
+    ) -> None:
+        """Send interactive project list so the user can choose an active workspace."""
+        projects = load_projects()
+        text, markup = build_projects_keyboard(
+            projects=projects,
+            running_pids=self._running_pids(),
+            paused_projects=self.state_manager.get_paused_projects(),
+        )
+        prefix = f"{notice}\n\n" if notice else ""
+        hint = "Tap a project below or send <code>/use &lt;PID&gt;</code> to start chatting or sending voice notes.\n\n"
+        await self._safe_send(
+            chat_id,
+            f"{prefix}{hint}{text}",
+            reply_markup=markup,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+    async def _open_project_briefing(
+        self,
+        chat_id: int,
+        pid: str,
+        edit_message_id: Optional[int] = None,
+    ) -> None:
+        """Activate a project for this chat and send its cached briefing card."""
+        clean_pid = pid.strip().upper()
+        briefing = build_project_briefing(clean_pid)
+        if not briefing:
+            await self._safe_send(chat_id, f"⚠️ Project <code>{escape_html(clean_pid)}</code> not found.")
+            return
+        briefing["running"] = clean_pid in self._running_pids()
+        briefing["paused"] = self.state_manager.is_project_paused(clean_pid)
+        self._set_active_project(chat_id, clean_pid)
+        text, markup = build_project_briefing_card(briefing)
+        sent = await self._send_or_edit(chat_id, text, reply_markup=markup, edit_message_id=edit_message_id)
+        self._record_card_target(chat_id, sent, clean_pid, f"{clean_pid}-0")
+
+    async def _cmd_use(
+        self,
+        chat_id: int,
+        arg: str = "",
+        reply_to_message_id: Optional[int] = None,
+    ) -> None:
+        """Switch the active project for natural-language text and voice messages."""
+        raw = arg.strip()
+        if not raw:
+            cur = self._get_active_project(chat_id)
+            notice = f"📌 Current active project: <code>{escape_html(cur)}</code>" if cur else "📌 Select an active project:"
+            await self._send_project_picker(chat_id, reply_to_message_id=reply_to_message_id, notice=notice)
+            return
+        token = raw.split()[0].upper()
+        if token in ("NONE", "CLEAR", "OFF"):
+            self._set_active_project(chat_id, None)
+            await self._safe_send(
+                chat_id,
+                "✅ Cleared active project selection for this chat.",
+                reply_to_message_id=reply_to_message_id,
+            )
+            return
+        if load_task(token, f"{token}-0") is None:
+            await self._send_project_picker(
+                chat_id,
+                reply_to_message_id=reply_to_message_id,
+                notice=f"⚠️ Project <code>{escape_html(token)}</code> was not found.",
+            )
+            return
+        await self._open_project_briefing(chat_id, token)
+
+    async def _cmd_summary(
+        self,
+        chat_id: int,
+        arg: str = "",
+        reply_to_message_id: Optional[int] = None,
+        edit_message_id: Optional[int] = None,
+    ) -> None:
+        """Generate a fresh read-only AI executive summary for the target or active project."""
+        clean_pid = arg.strip().split()[0].upper() if arg.strip() else (self._get_active_project(chat_id) or "")
+        if not clean_pid:
+            await self._send_project_picker(
+                chat_id,
+                reply_to_message_id=reply_to_message_id,
+                notice="📌 Select a project first to generate an AI summary.",
+            )
+            return
+        if load_task(clean_pid, f"{clean_pid}-0") is None:
+            await self._safe_send(
+                chat_id,
+                f"⚠️ Project <code>{escape_html(clean_pid)}</code> not found.",
+                reply_to_message_id=reply_to_message_id,
+            )
+            return
+
+        target_edit_id = edit_message_id
+        if target_edit_id is None:
+            wait_msg = await self._safe_send(
+                chat_id,
+                f"✨ Generating executive briefing for <code>{escape_html(clean_pid)}</code>...",
+                reply_to_message_id=reply_to_message_id,
+            )
+            if isinstance(wait_msg, dict) and wait_msg.get("message_id"):
+                target_edit_id = int(wait_msg["message_id"])
+
+        briefing = await generate_ai_project_briefing(clean_pid, router=self.router)
+        if not briefing:
+            await self._safe_send(
+                chat_id,
+                f"⚠️ Failed to build briefing for <code>{escape_html(clean_pid)}</code>.",
+                reply_to_message_id=reply_to_message_id,
+            )
+            return
+        briefing["running"] = clean_pid in self._running_pids()
+        briefing["paused"] = self.state_manager.is_project_paused(clean_pid)
+        self._set_active_project(chat_id, clean_pid)
+        text, markup = build_project_briefing_card(briefing)
+        sent = await self._send_or_edit(chat_id, text, reply_markup=markup, edit_message_id=target_edit_id)
+        self._record_card_target(chat_id, sent, clean_pid, f"{clean_pid}-0")
+
+    async def _handle_active_project_chat(
+        self,
+        chat_id: int,
+        pid: str,
+        text: str,
+        message_id: Optional[int] = None,
+        transcript: Optional[str] = None,
+        reply_with_voice: bool = False,
+    ) -> None:
+        """Route a plain text or transcribed voice message through the shared project chat router."""
+        if message_id:
+            await self.client.set_message_reaction(chat_id, int(message_id), "👀")
+
+        res = await handle_project_chat(
+            pid=pid,
+            message=text,
+            source="telegram_voice" if reply_with_voice else "telegram",
+            auto_run=True,
+            router=self.router,
+            watcher=self.watcher,
+            state_manager=self.state_manager,
+            intent_classifier=self._intent_classifier,
+        )
+
+        parts: List[str] = []
+        if transcript:
+            parts.append(f"🎙️ <i>\"{escape_html(transcript)}\"</i>")
+        parts.append(markdown_to_telegram_html(str(res.get("reply") or "Done.")))
+        reply_html = "\n\n".join(parts)
+
+        buttons: List[List[Dict[str, str]]] = []
+        if res.get("tid"):
+            tid = str(res["tid"])
+            buttons.append(
+                [{"text": f"📋 Open {tid}", "callback_data": f"task:open:{pid}:{tid}"[:64]}]
+            )
+        row_nav = [
+            {"text": f"📌 {pid} Briefing", "callback_data": f"proj:open:{pid}"[:64]},
+            {"text": "✨ AI Summary", "callback_data": f"proj:summary:{pid}"[:64]},
+        ]
+        if not reply_with_voice:
+            row_nav.append({"text": "🔊 Voice Brief", "callback_data": f"proj:voice:{pid}"[:64]})
+        buttons.append(row_nav)
+
+        sent = await self._safe_send(
+            chat_id,
+            reply_html,
+            reply_to_message_id=message_id,
+            reply_markup={"inline_keyboard": buttons},
+        )
+        self._record_card_target(chat_id, sent, pid, str(res.get("tid") or f"{pid}-0"))
+        if message_id:
+            await self.client.set_message_reaction(chat_id, int(message_id), "✅")
+
+        if reply_with_voice:
+            spoken = distill_spoken_briefing(str(res.get("spoken_reply") or res.get("reply") or ""))
+            if spoken:
+                voice_path = await synthesize_voice_ogg(spoken)
+                if voice_path and voice_path.exists():
+                    try:
+                        await self.client.send_voice(
+                            chat_id=chat_id,
+                            voice=voice_path,
+                            reply_to_message_id=message_id,
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to send voice reply for chat %s: %s", chat_id, exc)
+
+    async def _handle_voice_message(
+        self,
+        chat_id: int,
+        message: Dict[str, Any],
+        message_id: Optional[int] = None,
+    ) -> None:
+        """Download, transcribe, and route a Telegram voice or audio message."""
+        voice_obj = message.get("voice") or message.get("audio") or {}
+        file_id = str(voice_obj.get("file_id") or "").strip()
+        if not file_id:
+            return
+
+        if message_id:
+            await self.client.set_message_reaction(chat_id, int(message_id), "👀")
+
+        incoming_dir = Path(get_data_dir()) / "voice_cache" / "incoming"
+        local_audio: Optional[Path] = None
+        try:
+            local_audio, _ = await self.client.download_file_by_id(file_id, incoming_dir, filename_prefix="tg_voice")
+            transcript, _lang = await transcribe_voice(local_audio)
+        except Exception as exc:
+            await self._safe_send(
+                chat_id,
+                f"⚠️ Voice transcription failed: <code>{escape_html(format_exception_brief(exc))}</code>",
+                reply_to_message_id=message_id,
+            )
+            return
+        finally:
+            if local_audio and local_audio.exists():
+                try:
+                    local_audio.unlink()
+                except OSError:
+                    pass
+
+        cleaned = (transcript or "").strip()
+        if not cleaned:
+            await self._safe_send(
+                chat_id,
+                "🤔 No clear speech was detected in that voice note. Please try again.",
+                reply_to_message_id=message_id,
+            )
+            return
+
+        active_pid = self._get_active_project(chat_id)
+        if not active_pid:
+            await self._send_project_picker(
+                chat_id,
+                reply_to_message_id=message_id,
+                notice=f"🎙️ I heard: <i>\"{escape_html(cleaned)}\"</i>\n\nPlease select an active project first:",
+            )
+            return
+
+        await self._handle_active_project_chat(
+            chat_id=chat_id,
+            pid=active_pid,
+            text=cleaned,
+            message_id=message_id,
+            transcript=cleaned,
+            reply_with_voice=True,
+        )
+
     async def process_update(self, update: Dict[str, Any]) -> None:
         """Authenticate and route one Telegram update dict."""
         if "callback_query" in update:
@@ -383,6 +696,11 @@ class TodoXTelegramBot:
                 f"Your Chat ID (<code>{chat_id}</code>) is not authorized in <code>ALLOWED_CHAT_IDS</code>.",
                 reply_to_message_id=message_id,
             )
+            return
+
+        voice_obj = message.get("voice") or message.get("audio")
+        if isinstance(voice_obj, dict) and voice_obj.get("file_id"):
+            await self._handle_voice_message(chat_id, message, message_id)
             return
 
         text = (message.get("text") or "").strip()
@@ -439,10 +757,21 @@ class TodoXTelegramBot:
                 )
             return
 
-        await self._safe_send(
+        active_pid = self._get_active_project(chat_id)
+        if active_pid:
+            await self._handle_active_project_chat(
+                chat_id=chat_id,
+                pid=active_pid,
+                text=text,
+                message_id=message_id,
+                reply_with_voice=False,
+            )
+            return
+
+        await self._send_project_picker(
             chat_id,
-            "💬 Reply directly to any Project or Task card to attach an Admin comment, or use /help.",
             reply_to_message_id=message_id,
+            notice="📌 No active project selected for conversational chat.",
         )
 
     def _is_vop_batch_text(self, text: str) -> bool:
@@ -465,6 +794,10 @@ class TodoXTelegramBot:
             await self._cmd_help(chat_id)
         elif clean == "projects":
             await self._cmd_projects(chat_id)
+        elif clean == "use":
+            await self._cmd_use(chat_id, arg, reply_to_message_id=message_id)
+        elif clean == "summary":
+            await self._cmd_summary(chat_id, arg, reply_to_message_id=message_id)
         elif clean == "status":
             await self._cmd_status(chat_id)
         elif clean == "pin":
@@ -855,8 +1188,41 @@ class TodoXTelegramBot:
             await self._cmd_projects(chat_id, edit_message_id=msg_id)
         elif data.startswith("proj:open:"):
             pid = data.split(":", 2)[2]
+            await self.client.answer_callback_query(cq_id, text=f"Switched to {pid}")
+            await self._open_project_briefing(chat_id, pid, edit_message_id=msg_id)
+        elif data.startswith("proj:card:"):
+            pid = data.split(":", 2)[2]
             await self.client.answer_callback_query(cq_id)
             await self._open_project_card(chat_id, pid, edit_message_id=msg_id)
+        elif data.startswith("proj:summary:"):
+            pid = data.split(":", 2)[2]
+            await self.client.answer_callback_query(cq_id, text=f"Refreshing AI summary for {pid}...")
+            await self._cmd_summary(chat_id, pid, edit_message_id=msg_id)
+        elif data.startswith("proj:voice:"):
+            pid = data.split(":", 2)[2]
+            briefing = build_project_briefing(pid)
+            if not briefing:
+                await self.client.answer_callback_query(cq_id, text=f"Project {pid} not found", show_alert=True)
+                return
+            await self.client.answer_callback_query(cq_id, text=f"Synthesizing voice briefing for {pid}...")
+            spoken = distill_spoken_briefing(str(briefing.get("spoken_text") or briefing.get("summary_text") or ""))
+            voice_path = await synthesize_voice_ogg(spoken)
+            if voice_path and voice_path.exists():
+                try:
+                    await self.client.send_voice(
+                        chat_id=chat_id,
+                        voice=voice_path,
+                        caption=f"🔊 <b>Project {escape_html(pid)} Briefing</b>",
+                        reply_to_message_id=msg_id,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to send voice brief for %s: %s", pid, exc)
+            else:
+                await self._safe_send(
+                    chat_id,
+                    f"⚠️ Voice synthesis unavailable right now for <code>{escape_html(pid)}</code>.",
+                    reply_to_message_id=msg_id,
+                )
         elif data.startswith("proj:tasks:"):
             pid = data.split(":", 2)[2]
             await self.client.answer_callback_query(cq_id)
@@ -941,6 +1307,11 @@ class TodoXTelegramBot:
             update_task(pid, tid, status="complete", assignee="Admin")
             await self.client.answer_callback_query(cq_id, text=f"Marked {tid} complete")
             await self._open_task_card(chat_id, pid, tid, edit_message_id=msg_id)
+        elif data.startswith("task:approve:"):
+            _, _, pid, tid = data.split(":", 3)
+            update_task(pid, tid, status="complete", assignee="Admin")
+            await self.client.answer_callback_query(cq_id, text=f"Approved {tid}")
+            await self._open_project_briefing(chat_id, pid, edit_message_id=msg_id)
         elif data.startswith("comment:prompt:"):
             _, _, pid, tid = data.split(":", 3)
             self._pending_comment_target[chat_id] = (pid, tid)

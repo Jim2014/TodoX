@@ -7,11 +7,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from harness.types import HarnessProfile, HealthStatus, ModelInfo, PermissionPreset
 from orchestrator.models import ProjectSummary, Task
 
-from .formatter import escape_html
+from .formatter import escape_html, markdown_to_telegram_html
 
 BOT_COMMANDS: List[Dict[str, str]] = [
     {"command": "help", "description": "Show interactive command dashboard"},
     {"command": "projects", "description": "List and manage TodoX projects"},
+    {"command": "use", "description": "Switch active project and show briefing"},
+    {"command": "summary", "description": "Generate fresh AI summary for active project"},
     {"command": "status", "description": "Show watcher, harness, and project status"},
     {"command": "harness", "description": "Switch active AI CLI harness"},
     {"command": "model", "description": "Select model or fallback index"},
@@ -54,6 +56,8 @@ def build_help_text() -> str:
         "Manage autonomous project trees, switch AI CLI harnesses, and inspect live execution progress.\n\n"
         "<b>Interactive Commands:</b>\n"
         "• <code>/projects</code> — Browse, open, run, or pause projects\n"
+        "• <code>/use [PID]</code> — Switch active project &amp; enable direct voice/text chat\n"
+        "• <code>/summary [PID]</code> — Generate fresh AI executive summary\n"
         "• <code>/status</code> — Inspect watcher state and running workers\n"
         "• <code>/harness</code> — Switch active AI CLI harness (<code>agy</code>, etc.)\n"
         "• <code>/model</code> — Select model or fallback chain entry\n"
@@ -529,7 +533,7 @@ def build_pinned_banner_keyboard(paused_global: bool) -> Dict[str, Any]:
         "inline_keyboard": [
             [
                 {"text": "📁 Projects", "callback_data": "projects:list"},
-                {"text": "🔌 Harness", "callback_data": "harness:show"},
+                {"text": "📊 Status", "callback_data": "status:show"},
                 {"text": "🔄 Refresh", "callback_data": "status:show"},
             ],
             [
@@ -538,6 +542,95 @@ def build_pinned_banner_keyboard(paused_global: bool) -> Dict[str, Any]:
             ],
         ]
     }
+
+
+def build_project_briefing_card(briefing: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Build concise active-project briefing card focused on summary, attention items, and voice/chat."""
+    pid = str(briefing.get("pid") or "")
+    title = str(briefing.get("title") or pid)
+    is_running = bool(briefing.get("running"))
+    is_paused = bool(briefing.get("paused"))
+    status = str(briefing.get("status") or "not_started")
+    total = int(briefing.get("total_tasks") or 0)
+    done = int(briefing.get("completed_tasks") or 0)
+    pct = int(briefing.get("progress_pct") or 0)
+    runtime = briefing.get("runtime") or {}
+
+    icon = "🏃" if is_running else ("⏸️" if is_paused else _STATUS_EMOJI.get(status, "⬜"))
+    state_label = (
+        f"Running {escape_html(str(runtime.get('tid') or pid))}"
+        if is_running
+        else ("Paused" if is_paused else escape_html(status))
+    )
+
+    lines = [
+        f"{icon} <b>Project {escape_html(pid)}</b> — {escape_html(title)} 🌟 <i>[ACTIVE]</i>",
+        f"• <b>Progress:</b> <code>{done}/{total} ({pct}%)</code> | <b>State:</b> <code>{state_label}</code>",
+    ]
+
+    attention = briefing.get("attention_tasks") or []
+    if attention:
+        lines.append("• <b>Needs Attention:</b>")
+        for item in attention[:3]:
+            st_icon = _STATUS_EMOJI.get(item.get("status", ""), "🟡")
+            lines.append(
+                f"  {st_icon} <code>{escape_html(item['id'])}</code>: {escape_html(item.get('title', '')[:48])}"
+            )
+
+    src_map = {
+        "ai_refresh": "AI Executive Summary",
+        "worker_step": "Latest Worker Step",
+        "latest_ticket": "Latest Ticket Update",
+        "project_goal": "Project Goal",
+    }
+    src_label = src_map.get(str(briefing.get("summary_source") or ""), "Summary")
+    if briefing.get("is_ai_summary_stale"):
+        src_label += " (newer ticket updates available)"
+
+    summary_raw = str(briefing.get("summary_text") or "").strip()
+    if len(summary_raw) > 1200:
+        summary_raw = summary_raw[:1197] + "..."
+    lines.append(f"\n📌 <b>{escape_html(src_label)}:</b>\n{markdown_to_telegram_html(summary_raw)}")
+    lines.append("\n💬 <i>Active project set. Send text or a voice note anytime to chat with this workspace.</i>")
+
+    buttons: List[List[Dict[str, str]]] = [
+        [
+            {"text": "✨ AI Summary", "callback_data": _short_cb("proj:summary:", pid)},
+            {"text": "🔊 Voice Brief", "callback_data": _short_cb("proj:voice:", pid)},
+        ]
+    ]
+
+    row2: List[Dict[str, str]] = []
+    if attention:
+        first_att = attention[0]
+        if first_att.get("status") == "need_confirm":
+            row2.append(
+                {
+                    "text": f"✅ Approve {first_att['id']}",
+                    "callback_data": _short_cb("task:approve:", f"{pid}:{first_att['id']}"),
+                }
+            )
+    if is_running:
+        row2.append({"text": "🛑 Stop Worker", "callback_data": _short_cb("worker:stop:", pid)})
+    else:
+        row2.append({"text": "🤖 Run AI", "callback_data": _short_cb("proj:run:", pid)})
+    if row2:
+        buttons.append(row2)
+
+    buttons.append(
+        [
+            {"text": f"📋 Tasks ({total})", "callback_data": _short_cb("proj:tasks:", pid)},
+            {"text": "📁 Files", "callback_data": _short_cb("proj:files:", f"{pid}:0")},
+            {"text": "⚙️ Controls", "callback_data": _short_cb("proj:card:", pid)},
+        ]
+    )
+    buttons.append(
+        [
+            {"text": "🔄 Refresh", "callback_data": _short_cb("proj:open:", pid)},
+            {"text": "⬅️ All Projects", "callback_data": "projects:list"},
+        ]
+    )
+    return "\n".join(lines), {"inline_keyboard": buttons}
 
 
 if __name__ == "__main__":

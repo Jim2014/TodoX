@@ -18,6 +18,7 @@ from harness.registry import create_default_registry
 from harness.router import HarnessRouter, StepResult, format_event_log_line
 from harness.types import ErrorCategory, HarnessEvent, RunRequest
 
+from .briefing import save_cached_briefing
 from .event_bus import (
     mark_worker_finished,
     mark_worker_started,
@@ -278,6 +279,17 @@ async def execute_ai_task_async(
                 meta.last_run_at = datetime.now().isoformat()
                 reloaded.execution_meta = meta
                 save_task(pid, reloaded)
+
+                latest_note = reloaded.comments[-1].content.strip() if reloaded.comments else (result.response or "").strip()
+                if latest_note:
+                    save_cached_briefing(
+                        pid,
+                        summary_text=latest_note[:1200],
+                        source="worker_step",
+                        latest_activity_at=meta.last_run_at or datetime.now().isoformat(),
+                        harness=result.harness,
+                        model=result.model or "default",
+                    )
 
             print(f"[{pid}] AI Worker step finished successfully via {result.harness}.")
             state.reset_success()
