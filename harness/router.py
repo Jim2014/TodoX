@@ -198,6 +198,7 @@ class HarnessRouter:
         usage = UsageMetrics()
         duration_seconds = 0.0
         saw_error = False
+        got_terminal_result = False
 
         try:
             if on_harness_started is not None:
@@ -229,6 +230,8 @@ class HarnessRouter:
                     accumulated_text.append(event.text_delta)
 
                 elif event.type in ("result", "turn_complete"):
+                    if event.type == "result":
+                        got_terminal_result = True
                     if event.response:
                         final_response = event.response
                     final_status = event.status or "SUCCESS"
@@ -254,6 +257,14 @@ class HarnessRouter:
                         else ErrorCategory.PROCESS_CRASH
                     )
                     final_error_msg = event.response or "Harness execution failed"
+
+            if not got_terminal_result and not saw_error and (
+                getattr(harness, "_is_stopped", False) or getattr(harness, "stopped", False)
+            ):
+                saw_error = True
+                final_status = "CANCELLED"
+                final_error_cat = ErrorCategory.CANCELLED
+                final_error_msg = "Execution stopped by Admin."
         finally:
             await harness.stop()
 

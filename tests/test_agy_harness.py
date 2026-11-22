@@ -339,6 +339,85 @@ class TestAgyHarness(unittest.IsolatedAsyncioTestCase):
             ev_missing = [e async for e in missing_harness.run_stream(RunRequest(prompt="x", working_dir=tmpdir))]
             self.assertEqual(ev_missing[-1].error_category, ErrorCategory.BINARY_NOT_FOUND)
 
+    async def test_stream_reader_value_error_recovery_and_bookkeeping_skip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            harness = AgyHarness(agy_bin="/usr/bin/agy", keep_alive=False)
+
+            # 1. Verify internal user_input and system_message step updates are ignored
+            self.assertIsNone(
+                harness._parse_line(
+                    json.dumps(
+                        {
+                            "event": "step_update",
+                            "step_update": {"step_type": "user_input", "state": "DONE"},
+                        }
+                    )
+                )
+            )
+            self.assertIsNone(
+                harness._parse_line(
+                    json.dumps(
+                        {
+                            "event": "step_update",
+                            "step_update": {"step_type": "system_message", "state": "DONE"},
+                        }
+                    )
+                )
+            )
+
+            # 2. If stdout reader encounters ValueError, run_stream emits error & terminates proc cleanly
+            class BrokenStdout:
+                async def readline(self):
+                    raise ValueError("Separator is found, but chunk is longer than limit")
+
+            class DummyStdin:
+                def write(self, data):
+                    pass
+
+                async def drain(self):
+                    pass
+
+                def is_closing(self):
+                    return False
+
+                def close(self):
+                    pass
+
+            class DummyStderr:
+                async def read(self):
+                    return b""
+
+            class BrokenProc:
+                def __init__(self):
+                    self.pid = 999
+                    self.returncode = None
+                    self.stdin = DummyStdin()
+                    self.stdout = BrokenStdout()
+                    self.stderr = DummyStderr()
+                    self.terminated = False
+
+                def terminate(self):
+                    self.terminated = True
+                    self.returncode = -15
+
+                def kill(self):
+                    self.returncode = -9
+
+                async def wait(self):
+                    return self.returncode
+
+            broken_proc = BrokenProc()
+
+            async def _mock_spawn(**kwargs):
+                return broken_proc
+
+            harness._spawn_subprocess = _mock_spawn  # type: ignore[method-assign]
+            events = [e async for e in harness.run_stream(RunRequest(prompt="broken", working_dir=tmpdir))]
+            self.assertTrue(len(events) >= 1)
+            self.assertEqual(events[-1].type, "error")
+            self.assertIn("ValueError", events[-1].response)
+            self.assertTrue(broken_proc.terminated)
+
     async def test_real_agy_check_health_non_billable(self):
         real_harness = AgyHarness()
         if not os.path.isfile(real_harness.agy_bin):

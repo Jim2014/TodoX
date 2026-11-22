@@ -373,14 +373,14 @@ class AgyHarness(BaseHarness):
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.warning("AgyHarness stdout reader error: %s", exc)
+            logger.warning("AgyHarness stdout reader error (%s): %s", type(exc).__name__, exc)
             await self._event_queue.put(
                 HarnessEvent(
                     type="error",
                     harness="agy",
                     status="ERROR",
                     error_category=ErrorCategory.PROCESS_CRASH,
-                    response=f"Stdout reader failure: {exc}",
+                    response=f"Stream reader error ({type(exc).__name__}): {exc}",
                 )
             )
         finally:
@@ -573,6 +573,13 @@ class AgyHarness(BaseHarness):
                             self._start_idle_timer()
                     break
 
+                if event.type == "error":
+                    yield event
+                    got_result = True
+                    await self._terminate_process(process, grace_seconds=2.0)
+                    self._current_process = None
+                    break
+
                 yield event
 
             if not self.keep_alive or (not got_result and not self._is_stopped):
@@ -682,6 +689,9 @@ class AgyHarness(BaseHarness):
                     usage=UsageMetrics.from_dict(step.get("usage")),
                     payload=step,
                 )
+
+            if step_type in ("user_input", "system_message"):
+                return None
 
             return HarnessEvent(
                 type="raw",

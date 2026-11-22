@@ -10,17 +10,21 @@ import httpx
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from harness.router import StepResult
-from harness.types import CanonicalTool, ErrorCategory, HarnessEvent, UsageMetrics
-from telegram_ui.client import TelegramAPIError, TelegramClient, redact_bot_token
+from harness.types import CanonicalTool, ErrorCategory, HarnessEvent, HarnessProfile, HealthStatus, ModelInfo, UsageMetrics
+from telegram_ui.client import TelegramAPIError, TelegramClient, redact_bot_token, strip_telegram_html
 from telegram_ui.file_renderers import format_file_size, is_binary_file, render_file_to_html, render_markdown_to_html
 from telegram_ui.formatter import (
     balance_telegram_html,
+    build_auto_export_preview,
     format_harness_tool_event,
     format_pinned_dashboard,
     format_worker_final_card,
     format_worker_live_card,
+    looks_like_raw_html_document,
     markdown_to_telegram_html,
+    mask_streaming_protocol_and_html,
     split_text_chunks,
+    wrap_raw_html_for_mobile,
 )
 from telegram_ui.keyboards import (
     build_effort_keyboard,
@@ -227,6 +231,135 @@ class TestTelegramClientAndFormatter(unittest.IsolatedAsyncioTestCase):
             for row in kb["inline_keyboard"]:
                 for btn in row:
                     self.assertLessEqual(len(btn["callback_data"].encode("utf-8")), 64, btn["callback_data"])
+
+    async def test_429_fast_abort_vs_retry_and_html_strip_fallback(self):
+        client = TelegramClient("123456:DUMMY_SECRET_TOKEN")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.aclose = AsyncMock()
+        client._client = mock_http
+
+        # 1. Large 429 retry_after (196s) on non-blocking editMessageText fails fast without sleeping
+        r_big_429 = MagicMock()
+        r_big_429.status_code = 429
+        r_big_429.json.return_value = {
+            "ok": False,
+            "error_code": 429,
+            "description": "Too Many Requests",
+            "parameters": {"retry_after": 196},
+        }
+        mock_http.post = AsyncMock(return_value=r_big_429)
+        with unittest.mock.patch("telegram_ui.client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            with self.assertRaises(TelegramAPIError) as exc_info:
+                await client._post("editMessageText", {"chat_id": 100, "message_id": 1, "text": "hi"})
+            self.assertEqual(exc_info.exception.error_code, 429)
+            self.assertEqual(exc_info.exception.retry_after, 196.0)
+            mock_sleep.assert_not_awaited()
+
+        # 2. Small 429 retry_after (1s) waits once and succeeds
+        r_small_429 = MagicMock()
+        r_small_429.status_code = 429
+        r_small_429.json.return_value = {
+            "ok": False,
+            "error_code": 429,
+            "description": "Too Many Requests",
+            "parameters": {"retry_after": 1},
+        }
+        r_ok = MagicMock()
+        r_ok.status_code = 200
+        r_ok.json.return_value = {"ok": True, "result": {"message_id": 55}}
+        mock_http.post = AsyncMock(side_effect=[r_small_429, r_ok])
+        with unittest.mock.patch("telegram_ui.client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            res = await client._post("sendMessage", {"chat_id": 100, "text": "ok"})
+            self.assertEqual(res["message_id"], 55)
+            mock_sleep.assert_awaited_once_with(1.0)
+
+        # 3. HTML parse fallback strips HTML tags and unescapes entities so <b> never leaks
+        r_bad_html = MagicMock()
+        r_bad_html.status_code = 400
+        r_bad_html.json.return_value = {"ok": False, "error_code": 400, "description": "Bad Request: can't parse entities"}
+        mock_http.post = AsyncMock(side_effect=[r_bad_html, r_ok])
+        await client.send_message(
+            chat_id=100,
+            text="<b>Worker Completed</b>\n<blockquote expandable>&lt;&lt;EOF &amp;&amp;</blockquote>",
+        )
+        fallback_payload = mock_http.post.call_args_list[1].kwargs["json"]
+        self.assertNotIn("parse_mode", fallback_payload)
+        self.assertNotIn("<b>", fallback_payload["text"])
+        self.assertNotIn("<blockquote", fallback_payload["text"])
+        self.assertIn("Worker Completed", fallback_payload["text"])
+        self.assertIn("<<EOF &&", fallback_payload["text"])
+        await client.close()
+
+    def test_tool_html_escaping_tag_repair_raw_html_masking_and_mobile_wrap(self):
+        # 1. Final card MUST escape raw <<'EOF' and > /dev/null && in tool_events
+        go_tools = [
+            "[tool:shell] DONE: node - <<'EOF'\nconst fs = require('fs');\n(2.8s)",
+            "[tool:shell] DONE: python -m json.tool /tmp/a.json > /dev/null && echo ok (1.5s)",
+        ]
+        res = StepResult(
+            success=True,
+            harness="agy",
+            model="gemini-3.8-flash",
+            duration_seconds=370.0,
+            tool_events=go_tools,
+            response="Done",
+        )
+        final_card = format_worker_final_card(
+            "GO",
+            "GO-5",
+            res,
+            "complete",
+            "Admin",
+            latest_comment="Updated `files/go_game.html` with `<meta name=\"viewport\">`.",
+        )
+        self.assertNotIn("<<", final_card)
+        self.assertNotIn("&&", final_card)
+        self.assertIn("&lt;&lt;", final_card)
+        self.assertIn("&gt;", final_card)
+        self.assertIn("&amp;&amp;", final_card)
+
+        # 2. Misnested and stray closing tags are repaired cleanly
+        self.assertEqual(balance_telegram_html("<b>foo <i>bar</b> baz</i>"), "<b>foo <i>bar</i></b><i> baz</i>")
+        stray_repaired = balance_telegram_html("hello </b> world")
+        self.assertNotIn("</b>", stray_repaired)
+        self.assertIn("hello", stray_repaired)
+
+        # 3. Streaming masks in-flight [AGY_FILE], [AGY_VOICE], [AGY_ACTIONS], and raw HTML
+        stream_proto = (
+            "Checking **TodoX** runtime.\n\n"
+            "[AGY_FILE]\nfilename: todox.html\n---\n"
+            "<!DOCTYPE html><html><body><div class=\"card\"><ul><li>Long HTML body"
+        )
+        masked_live = format_worker_live_card("GO", "GO-5", "agy", "gemini-3.8-flash", "auto", [], stream_proto)
+        self.assertIn("Generating standalone HTML report attachment", masked_live)
+        self.assertNotIn("<div class=", masked_live)
+        self.assertNotIn("<li>", masked_live)
+
+        raw_html = "Summary below:\n\n<div class=\"card\">\n  <div class=\"card-title\">Status</div>\n  <ul><li>Ok</li></ul>"
+        self.assertTrue(looks_like_raw_html_document(raw_html))
+        self.assertNotIn("<div", mask_streaming_protocol_and_html(raw_html))
+
+        # 4. Worst-case '<'-heavy live card still stays <= 4000 chars
+        huge_lt_body = "<a_lot_of_brackets> " * 600
+        bounded_live = format_worker_live_card("GO", "GO-5", "agy", "default", "auto", [], huge_lt_body)
+        self.assertLessEqual(len(bounded_live), 4000)
+
+        # 5. Preview condensation and offline mobile wrapper (zero CDN URLs)
+        long_html = (
+            "<!DOCTYPE html><html><head><title>TodoX Audit</title></head>"
+            "<body><div class='card'><ul><li>Line details</li></ul></div>" * 10
+            + "</body></html>"
+        )
+        preview = build_auto_export_preview(long_html, "GO_GO-5_report.html")
+        self.assertLess(len(preview), 700)
+        self.assertNotIn("<div", preview)
+        self.assertIn("TodoX Audit", preview)
+
+        wrapped_frag = wrap_raw_html_for_mobile("Fragment", "<div><p>Offline check</p></div>", {"project": "GO"})
+        self.assertIn("<!DOCTYPE html>", wrapped_frag)
+        self.assertNotIn("http://", wrapped_frag)
+        self.assertNotIn("https://", wrapped_frag)
 
 
 if __name__ == "__main__":

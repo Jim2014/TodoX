@@ -10,15 +10,17 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from harness.router import StepResult
-from harness.types import HarnessEvent, HarnessProfile
+from harness.types import ErrorCategory, HarnessEvent, HarnessProfile
 from orchestrator.models import Task
 
-from .client import TelegramClient, format_exception_brief
+from .client import TelegramAPIError, TelegramClient, format_exception_brief
 from .formatter import (
     escape_html,
     format_harness_tool_event,
     format_worker_final_card,
     format_worker_live_card,
+    looks_like_raw_html_document,
+    wrap_raw_html_for_mobile,
 )
 from .keyboards import build_worker_done_keyboard, build_worker_running_keyboard
 
@@ -40,6 +42,7 @@ class LiveStepTracker:
     tool_events: List[str] = field(default_factory=list)
     current_text: str = ""
     last_rendered: str = ""
+    stopped: bool = False
 
 
 class WorkerNotifier:
@@ -54,6 +57,7 @@ class WorkerNotifier:
         self.client = client
         self.notify_chat_ids = list(dict.fromkeys(int(cid) for cid in notify_chat_ids))
         self.stream_throttle_seconds = max(0.0, float(stream_throttle_seconds))
+        self._chat_edit_backoff_until: Dict[int, float] = {}
 
     def has_targets(self) -> bool:
         """Return True when both a TelegramClient and at least one chat ID are configured."""
@@ -104,6 +108,9 @@ class WorkerNotifier:
 
     async def on_event(self, tracker: LiveStepTracker, event: HarnessEvent) -> None:
         """Update tracker buffers on a HarnessEvent and push throttled live card edits."""
+        if tracker.stopped:
+            return
+
         if event.type == "tool":
             line = format_harness_tool_event(event)
             if tracker.tool_events and tracker.tool_events[-1].endswith("...") and event.tool_state != "ACTIVE":
@@ -119,7 +126,18 @@ class WorkerNotifier:
             return
 
         now = time.time()
-        if (now - tracker.last_edit_at) < self.stream_throttle_seconds:
+        elapsed = now - tracker.started_at
+        if self.stream_throttle_seconds > 0.0:
+            if elapsed >= 90.0:
+                effective_throttle = max(self.stream_throttle_seconds, 4.0)
+            elif elapsed >= 30.0:
+                effective_throttle = max(self.stream_throttle_seconds, 2.5)
+            else:
+                effective_throttle = self.stream_throttle_seconds
+        else:
+            effective_throttle = 0.0
+
+        if (now - tracker.last_edit_at) < effective_throttle:
             return
 
         rendered = format_worker_live_card(
@@ -130,7 +148,7 @@ class WorkerNotifier:
             preset=tracker.preset,
             tool_events=tracker.tool_events,
             current_text=tracker.current_text,
-            elapsed_seconds=now - tracker.started_at,
+            elapsed_seconds=elapsed,
             status_label="Running...",
         )
         if rendered == tracker.last_rendered:
@@ -138,7 +156,11 @@ class WorkerNotifier:
 
         assert self.client is not None
         markup = build_worker_running_keyboard(tracker.pid)
+        any_attempted = False
         for chat_id, msg_id in list(tracker.message_ids.items()):
+            if now < self._chat_edit_backoff_until.get(chat_id, 0.0):
+                continue
+            any_attempted = True
             try:
                 await self.client.edit_message_text(
                     chat_id=chat_id,
@@ -146,11 +168,20 @@ class WorkerNotifier:
                     text=rendered,
                     reply_markup=markup,
                 )
+            except TelegramAPIError as exc:
+                if exc.error_code == 429 and exc.retry_after:
+                    backoff_until = time.time() + float(exc.retry_after)
+                    self._chat_edit_backoff_until[chat_id] = max(
+                        self._chat_edit_backoff_until.get(chat_id, 0.0),
+                        backoff_until,
+                    )
+                logger.warning("Live card edit failed for %s/%s: %s", chat_id, msg_id, format_exception_brief(exc))
             except Exception as exc:
                 logger.debug("Live card edit skipped for %s/%s: %s", chat_id, msg_id, format_exception_brief(exc))
 
-        tracker.last_rendered = rendered
-        tracker.last_edit_at = now
+        if any_attempted:
+            tracker.last_rendered = rendered
+            tracker.last_edit_at = now
 
     async def finish_step(
         self,
@@ -158,7 +189,11 @@ class WorkerNotifier:
         result: StepResult,
         task_after: Optional[Task] = None,
     ) -> None:
-        """Replace live progress card with the final step summary and attach error log if failed."""
+        """Replace live progress card with final summary and attach HTML report or error log."""
+        is_cancelled = result.error_category == ErrorCategory.CANCELLED or tracker.stopped
+        if is_cancelled:
+            tracker.stopped = True
+
         if not self.has_targets():
             return
 
@@ -169,6 +204,14 @@ class WorkerNotifier:
         if task_after and task_after.comments:
             latest_comment = task_after.comments[-1].content
 
+        raw_html_source = (
+            latest_comment
+            if looks_like_raw_html_document(latest_comment)
+            else (result.response or "")
+        )
+        raw_html_response = (not is_cancelled) and looks_like_raw_html_document(raw_html_source)
+        auto_export_filename = f"{tracker.pid}_{tracker.tid}_report.html" if raw_html_response else None
+
         final_text = format_worker_final_card(
             pid=tracker.pid,
             tid=tracker.tid,
@@ -176,8 +219,15 @@ class WorkerNotifier:
             task_status=task_status,
             task_assignee=task_assignee,
             latest_comment=latest_comment,
+            formatted_tool_events=tracker.tool_events,
+            auto_export_filename=auto_export_filename,
         )
-        has_error = not result.success and not result.fallback_switched and not result.backoff_triggered
+        has_error = (
+            not result.success
+            and not is_cancelled
+            and not result.fallback_switched
+            and not result.backoff_triggered
+        )
         markup = build_worker_done_keyboard(
             pid=tracker.pid,
             tid=tracker.tid,
@@ -187,6 +237,8 @@ class WorkerNotifier:
 
         for chat_id in self.notify_chat_ids:
             msg_id = tracker.message_ids.get(chat_id)
+            if is_cancelled and not msg_id:
+                continue
             try:
                 if msg_id:
                     await self.client.edit_message_text(
@@ -201,8 +253,40 @@ class WorkerNotifier:
                         text=final_text,
                         reply_markup=markup,
                     )
+            except TelegramAPIError as exc:
+                if exc.error_code == 429 and exc.retry_after:
+                    backoff_until = time.time() + float(exc.retry_after)
+                    self._chat_edit_backoff_until[chat_id] = max(
+                        self._chat_edit_backoff_until.get(chat_id, 0.0),
+                        backoff_until,
+                    )
+                logger.warning("Failed to deliver final card to %s: %s", chat_id, format_exception_brief(exc))
             except Exception as exc:
                 logger.warning("Failed to deliver final card to %s: %s", chat_id, format_exception_brief(exc))
+
+        if is_cancelled:
+            logger.info("Suppressed partial report/error log upload for %s/%s after /stop.", tracker.pid, tracker.tid)
+            return
+
+        if raw_html_response and auto_export_filename:
+            wrapped_html = wrap_raw_html_for_mobile(
+                title=f"{tracker.pid} / {tracker.tid} Report",
+                raw_html_content=raw_html_source,
+                metadata={
+                    "model": result.model or tracker.model or "default",
+                    "project": tracker.pid,
+                },
+            )
+            for chat_id in self.notify_chat_ids:
+                try:
+                    await self.client.send_document(
+                        chat_id=chat_id,
+                        document_content=wrapped_html,
+                        filename=auto_export_filename,
+                        caption=f"📄 <b>{escape_html(tracker.pid)} / {escape_html(tracker.tid)} HTML Report</b>",
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to send HTML report document to %s: %s", chat_id, format_exception_brief(exc))
 
         if not result.success and result.output_lines:
             last_150 = "\n".join(line.rstrip("\n") for line in result.output_lines[-150:])

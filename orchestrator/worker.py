@@ -237,6 +237,16 @@ async def execute_ai_task_async(
                 await notifier.finish_step(tracker, result, task_after=load_task(pid, active_task.id))
             return result
 
+        if result.error_category == ErrorCategory.CANCELLED:
+            err_msg = result.error_message or "Execution cancelled by Admin."
+            print(f"[{pid}] AI Worker step stopped by Admin.")
+            if tracker is not None:
+                tracker.stopped = True
+            fail_active_tasks(pid, err_msg, [], send_alert=(notifier is None))
+            if notifier is not None and tracker is not None:
+                await notifier.finish_step(tracker, result, task_after=load_task(pid, active_task.id))
+            return result
+
         err_msg = result.error_message or f"Execution Failed ({result.error_category.value}): {result.status}"
         print(f"[{pid}] AI Worker step failed ({result.error_category.value}): {err_msg}")
         fail_active_tasks(pid, err_msg, result.output_lines, send_alert=(notifier is None))
@@ -246,6 +256,8 @@ async def execute_ai_task_async(
 
     except asyncio.CancelledError:
         err_msg = "Execution cancelled by Admin."
+        if tracker is not None:
+            tracker.stopped = True
         fail_active_tasks(pid, err_msg, [], send_alert=(notifier is None))
         cancel_res = StepResult(
             success=False,

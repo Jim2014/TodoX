@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -34,6 +35,12 @@ def _env_bool(name: str, default: bool = True) -> bool:
 async def async_main() -> None:
     """Initialize services and run AsyncWatcher + TodoXTelegramBot concurrently."""
     load_dotenv()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     state.reset_model()
 
     start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

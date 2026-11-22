@@ -23,6 +23,7 @@ from orchestrator.models import Task
 from orchestrator.state import SystemState
 from orchestrator.storage import create_project, create_task, get_default_worker_prompt, load_task
 from telegram_ui.bot import TodoXTelegramBot
+from telegram_ui.client import TelegramAPIError
 from telegram_ui.notifier import WorkerNotifier
 
 
@@ -282,6 +283,91 @@ class TestTelegramBotAndNotifier(unittest.IsolatedAsyncioTestCase):
         await notifier.finish_step(tracker, failed, Task(id="BETA-1", status="failed", assignee="Admin"))
         self.assertIn("Worker Step Failed", self.client.edited_messages[-1]["text"])
         self.assertEqual(self.client.sent_documents[-1]["filename"], "BETA_error_log.html")
+
+    async def test_notifier_429_backoff_raw_html_export_and_stop_suppression(self):
+        # 1. Per-chat 429 backoff skips intermediate edits without stalling, then exports raw HTML
+        class _RateLimitedClient(_MockTelegramClient):
+            def __init__(self):
+                super().__init__()
+                self.edit_calls = 0
+
+            async def edit_message_text(self, **kwargs):
+                self.edit_calls += 1
+                if self.edit_calls == 1:
+                    raise TelegramAPIError(429, "Too Many Requests", retry_after=60.0)
+                return await super().edit_message_text(**kwargs)
+
+        rl_client = _RateLimitedClient()
+        notifier = WorkerNotifier(client=rl_client, notify_chat_ids=[100], stream_throttle_seconds=0.0)
+        tracker = await notifier.start_step("GO", "GO-5", HarnessProfile())
+
+        # First streaming edit hits 429 (retry_after=60s) -> sets backoff
+        await notifier.on_event(tracker, HarnessEvent(type="text_delta", harness="agy", text_delta="Part 1"))
+        # Second streaming edit must be skipped cleanly due to backoff
+        await notifier.on_event(tracker, HarnessEvent(type="text_delta", harness="agy", text_delta="<div class='card'>"))
+        self.assertEqual(rl_client.edit_calls, 1)
+        self.assertGreater(notifier._chat_edit_backoff_until[100], 0.0)
+
+        # Final step still delivers concise card + wrapped offline HTML report document
+        raw_html = (
+            "<!DOCTYPE html><html><head><title>GO Mobile Report</title></head><body>"
+            + "<div class='card'><ul><li>Board ok</li></ul></div>" * 20
+            + "</body></html>"
+        )
+        res = StepResult(
+            success=True,
+            harness="agy",
+            model="gemini-3.8-flash",
+            duration_seconds=4.0,
+            response=raw_html,
+            tool_events=["[tool:shell] DONE: node - <<'EOF'\nconsole.log(1)\n(1.0s)"],
+        )
+        await notifier.finish_step(tracker, res, Task(id="GO-5", status="complete", assignee="Admin"))
+        self.assertEqual(rl_client.edit_calls, 2)
+        final_text = rl_client.edited_messages[-1]["text"]
+        self.assertNotIn("<div class=", final_text)
+        self.assertIn("GO Mobile Report", final_text)
+        self.assertIn("Worker Step Completed", final_text)
+        self.assertEqual(rl_client.sent_documents[-1]["filename"], "GO_GO-5_report.html")
+
+        # 2. /stop cancellation suppresses partial raw HTML delivery and attaches zero error logs
+        stop_client = _MockTelegramClient()
+        stop_notifier = WorkerNotifier(client=stop_client, notify_chat_ids=[100], stream_throttle_seconds=0.0)
+        stop_tracker = await stop_notifier.start_step("GO", "GO-6", HarnessProfile())
+        cancel_res = StepResult(
+            success=False,
+            harness="agy",
+            status="CANCELLED",
+            error_category=ErrorCategory.CANCELLED,
+            error_message="Execution stopped by Admin.",
+            output_lines=["partial raw noise"],
+        )
+        await stop_notifier.finish_step(stop_tracker, cancel_res, Task(id="GO-6", status="failed", assignee="Admin"))
+        self.assertTrue(stop_tracker.stopped)
+        self.assertEqual(len(stop_client.sent_documents), 0)
+        self.assertIn("Worker Step Stopped", stop_client.edited_messages[-1]["text"])
+
+    async def test_send_project_file_serves_html_directly_without_double_wrapping(self):
+        create_project("WEB", "Web Game", "Serve HTML", get_default_worker_prompt())
+        html_path = os.path.join(self._tmpdir.name, "projects", "WEB", "files", "go_game.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write("<!DOCTYPE html><html><head><title>Go Game</title></head><body><h1>Go</h1></body></html>")
+
+        self.bot._scan_project_files("WEB")
+        files = self.bot._file_lists_cache["WEB"]
+        html_idx = files.index("files/go_game.html")
+        await self.bot.process_update(
+            {
+                "callback_query": {
+                    "id": "cq-html",
+                    "from": {"id": 100},
+                    "data": f"file:get:WEB:{html_idx}",
+                    "message": {"message_id": 20, "chat": {"id": 100}},
+                }
+            }
+        )
+        self.assertEqual(self.client.sent_documents[-1]["filename"], "go_game.html")
+        self.assertIn(b"<title>Go Game</title>", self.client.sent_documents[-1]["document_content"])
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import os
 import platform
 import shlex
 import subprocess
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +43,7 @@ from orchestrator.storage import (
 
 from .client import TelegramAPIError, TelegramClient, format_exception_brief
 from .file_renderers import render_file_to_html
-from .formatter import escape_html, format_pinned_dashboard
+from .formatter import escape_html, format_pinned_dashboard, wrap_raw_html_for_mobile
 from .keyboards import (
     BOT_COMMANDS,
     build_effort_keyboard,
@@ -134,6 +135,7 @@ class TodoXTelegramBot:
         self._pending_comment_target: Dict[int, Tuple[str, str]] = {}
         self._card_targets: Dict[Tuple[int, int], Tuple[str, str]] = {}
         self._file_lists_cache: Dict[str, List[str]] = {}
+        self._chat_edit_backoff_until: Dict[int, float] = {}
         self._vop_handlers: Dict[str, Any] = {
             "/new-project": self._vop_new_project,
             "/new-task": self._vop_new_task,
@@ -200,6 +202,15 @@ class TodoXTelegramBot:
             )
         except asyncio.CancelledError:
             raise
+        except TelegramAPIError as exc:
+            if exc.error_code == 429 and exc.retry_after:
+                backoff_until = time.time() + float(exc.retry_after)
+                self._chat_edit_backoff_until[chat_id] = max(
+                    self._chat_edit_backoff_until.get(chat_id, 0.0),
+                    backoff_until,
+                )
+            logger.warning("Telegram delivery error for chat %s: %s", chat_id, format_exception_brief(exc))
+            return None
         except Exception as exc:
             logger.warning("Telegram delivery error for chat %s: %s", chat_id, format_exception_brief(exc))
             return None
@@ -1012,6 +1023,19 @@ class TodoXTelegramBot:
             return
 
         await self.client.send_chat_action(chat_id, "upload_document")
+        if target.suffix.lower() in (".html", ".htm"):
+            raw_html = target.read_text(encoding="utf-8", errors="replace")
+            low = raw_html.lower()
+            if "<!doctype html" not in low and "<html" not in low:
+                raw_html = wrap_raw_html_for_mobile(title=target.name, raw_html_content=raw_html)
+            await self.client.send_document(
+                chat_id=chat_id,
+                document_content=raw_html.encode("utf-8"),
+                filename=target.name,
+                caption=f"🌐 <code>{escape_html(rel_path)}</code>",
+            )
+            return
+
         rendered_html = render_file_to_html(target, rel_path=rel_path, pid=pid)
         if rendered_html is not None:
             await self.client.send_document(

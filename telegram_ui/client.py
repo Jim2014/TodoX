@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -16,6 +17,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _BOT_TOKEN_URL_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
+_TG_HTML_TAG_RE = re.compile(
+    r"</?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|blockquote|a|tg-spoiler|tg-emoji)(?:\s+[^>]*)?>",
+    re.IGNORECASE,
+)
 
 _RETRYABLE_IDEMPOTENT_METHODS = frozenset(
     {
@@ -29,6 +34,24 @@ _RETRYABLE_IDEMPOTENT_METHODS = frozenset(
     }
 )
 _TRANSIENT_RETRY_DELAY_SECONDS = 0.3
+_NON_BLOCKING_STREAM_METHODS = frozenset(
+    {
+        "editMessageText",
+        "editMessageReplyMarkup",
+        "sendChatAction",
+        "setMessageReaction",
+    }
+)
+_MAX_INLINE_429_SLEEP_SECONDS = 5.0
+_MAX_CRITICAL_429_SLEEP_SECONDS = 30.0
+
+
+def strip_telegram_html(text: str) -> str:
+    """Strip Telegram HTML formatting tags and unescape entities for plain-text fallback."""
+    if not text:
+        return ""
+    without_tags = _TG_HTML_TAG_RE.sub("", text)
+    return html.unescape(without_tags)
 
 
 def redact_bot_token(text: str) -> str:
@@ -47,9 +70,10 @@ def format_exception_brief(exc: BaseException) -> str:
 class TelegramAPIError(Exception):
     """Exception raised when Telegram Bot API returns ok=false."""
 
-    def __init__(self, error_code: int, description: str) -> None:
+    def __init__(self, error_code: int, description: str, retry_after: Optional[float] = None) -> None:
         self.error_code = int(error_code)
         self.description = redact_bot_token(str(description))
+        self.retry_after = retry_after
         super().__init__(f"Telegram API Error {self.error_code}: {self.description}")
 
 
@@ -117,15 +141,22 @@ class TelegramClient:
 
             if err_code == 429:
                 params = data.get("parameters", {})
-                retry_after = float(params.get("retry_after", 1) or 1)
-                logger.warning("Telegram rate limit (429) on %s; retrying after %.1fs", method, retry_after)
-                await asyncio.sleep(retry_after)
-                resp = await client.post(url, **kwargs)
-                data = resp.json()
-                if data.get("ok"):
-                    return data.get("result", {})
-                err_code = data.get("error_code", resp.status_code if resp is not None else 429)
-                desc = redact_bot_token(str(data.get("description", desc)))
+                try:
+                    retry_after = max(0.0, float(params.get("retry_after", 1) or 1))
+                except (TypeError, ValueError):
+                    retry_after = 1.0
+                logger.warning("Telegram rate limit (429) on %s; retry after %.1fs", method, retry_after)
+                if method in _NON_BLOCKING_STREAM_METHODS and retry_after > _MAX_INLINE_429_SLEEP_SECONDS:
+                    raise TelegramAPIError(err_code, desc, retry_after=retry_after)
+                if retry_after <= _MAX_CRITICAL_429_SLEEP_SECONDS:
+                    await asyncio.sleep(retry_after)
+                    resp = await client.post(url, **kwargs)
+                    data = resp.json()
+                    if data.get("ok"):
+                        return data.get("result", {})
+                    err_code = data.get("error_code", resp.status_code if resp is not None else 429)
+                    desc = redact_bot_token(str(data.get("description", desc)))
+                raise TelegramAPIError(err_code, desc, retry_after=retry_after)
 
             raise TelegramAPIError(err_code, desc)
 
@@ -196,7 +227,9 @@ class TelegramClient:
         except TelegramAPIError as exc:
             lowered = exc.description.lower()
             if parse_mode and ("can't parse entities" in lowered or "tag" in lowered):
+                logger.warning("Telegram rejected HTML in sendMessage (%s); falling back to stripped plain text", exc.description)
                 plain_payload = {k: v for k, v in payload.items() if k != "parse_mode"}
+                plain_payload["text"] = strip_telegram_html(text)
                 res = await self._post("sendMessage", plain_payload)
                 return res if isinstance(res, dict) else {}
             raise
@@ -228,7 +261,9 @@ class TelegramClient:
             if "message is not modified" in lowered:
                 return None
             if parse_mode and ("can't parse entities" in lowered or "tag" in lowered):
+                logger.warning("Telegram rejected HTML in editMessageText (%s); falling back to stripped plain text", exc.description)
                 plain_payload = {k: v for k, v in payload.items() if k != "parse_mode"}
+                plain_payload["text"] = strip_telegram_html(text)
                 try:
                     res = await self._post("editMessageText", plain_payload)
                     return res if isinstance(res, dict) else None
@@ -336,7 +371,10 @@ class TelegramClient:
             err_code = res_json.get("error_code", resp.status_code)
             desc = redact_bot_token(str(res_json.get("description", "Unknown error")))
             if parse_mode and ("can't parse entities" in desc.lower() or "tag" in desc.lower()):
+                logger.warning("Telegram rejected HTML caption in sendDocument (%s); falling back to stripped plain text", desc)
                 data.pop("parse_mode", None)
+                if caption:
+                    data["caption"] = strip_telegram_html(caption)
                 resp = await client.post(url, data=data, files=files, timeout=60.0)
                 res_json = resp.json()
                 if res_json.get("ok"):
@@ -451,6 +489,10 @@ if __name__ == "__main__":
         redacted = redact_bot_token("https://api.telegram.org/bot123456:ABCDEF_secret_token/getMe")
         assert "<REDACTED>" in redacted
         assert "secret_token" not in redacted
+        stripped = strip_telegram_html("<b>Bold</b> &lt;div&gt; <code>x &amp; y</code>")
+        assert stripped == "Bold <div> x & y"
+        err = TelegramAPIError(429, "Too Many Requests", retry_after=196.0)
+        assert err.retry_after == 196.0
         client = TelegramClient("123456:DUMMY_TOKEN")
         assert client.base_url.endswith("/bot123456:DUMMY_TOKEN")
         await client.close()

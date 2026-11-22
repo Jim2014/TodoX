@@ -9,8 +9,8 @@ TodoX is an AI-driven project management and development orchestrator built on a
   - **`AgyHarness` (Default)**: Integrates Google Antigravity CLI (`agy`) via bidirectional `--input-format stream-json --output-format stream-json`, dynamic `agy models` discovery, reasoning effort flags, permission presets (`auto`, `accept-edits`, `plan`, `turbo`), and mid-flight steering.
   - **3-Level Routing & Fallback**: `HarnessRouter` resolves overrides in **Task > Project > Global** order and steps along a configurable fallback chain on rate-limit (`429`) errors.
 - **Upgraded Async Telegram Interface (`telegram_ui/`)**:
-  - Lightweight async `httpx` client (`TelegramClient`) with bot-token redaction, `429` retry handling, `409` polling backoff, and automatic HTML-to-plain-text fallback.
-  - **Live Worker Progress Cards**: Streams expandable tool traces (`<blockquote expandable>`), elapsed duration, token usage, and one-tap **Stop** / **Live Log** / **Approve & Resume** / **Retry** buttons directly in Telegram.
+  - Lightweight async `httpx` client (`TelegramClient`) with bot-token redaction, non-blocking `429` rate-limit protection for live edits, `409` polling backoff, and HTML-stripped plain-text fallback.
+  - **Live Worker Progress Cards**: Streams expandable tool traces (`<blockquote expandable>`), elapsed duration, token usage, adaptive throttling, raw HTML/protocol masking during live edits, auto-exported mobile HTML reports, clean `/stop` delivery suppression, and one-tap **Stop** / **Live Log** / **Approve & Resume** / **Retry** buttons directly in Telegram.
   - **Interactive Controls + Reply-to-Card UX**: Inline keyboards for `/projects`, `/status`, `/harness`, `/model`, `/effort`, `/permissions`, `/pause`, `/resume`, and `/stop`, plus replying directly to any Project or Task card to attach Admin comments.
   - **Offline Mobile HTML File Viewers**: Renders Markdown, diffs, and source code into self-contained dark/light HTML reports without external CDN dependencies.
   - **Deny-by-Default Security**: Enforces `ALLOWED_CHAT_IDS` / `ADMIN_CHAT_ID` on all incoming messages and inline callbacks (`ALLOW_ALL_CHATS=false` by default).

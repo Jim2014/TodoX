@@ -197,6 +197,23 @@ class TestHarnessRouterAndState(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(st.set_effort("invalid"))
             self.assertEqual(st.set_permission_preset("readonly"), "plan")
 
+    async def test_router_cancelled_when_harness_stopped_without_result(self):
+        class _StoppedMidStreamHarness(_FakeHarness):
+            async def run_stream(self, request: RunRequest):
+                yield HarnessEvent(type="init", harness="agy", session_id="s-stop")
+                yield HarnessEvent(type="text_delta", harness="agy", text_delta="<div class='partial'>")
+                self.stopped = True
+                return
+
+        reg = HarnessRegistry()
+        reg.register("agy", lambda **kw: _StoppedMidStreamHarness(name="agy"))
+        router = HarnessRouter(registry=reg)
+
+        res = await router.run_step(RunRequest(prompt="go", working_dir=tempfile.gettempdir()))
+        self.assertFalse(res.success)
+        self.assertEqual(res.status, "CANCELLED")
+        self.assertEqual(res.error_category, ErrorCategory.CANCELLED)
+
 
 if __name__ == "__main__":
     unittest.main()
