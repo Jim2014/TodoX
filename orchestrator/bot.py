@@ -556,21 +556,23 @@ async def post_init(app: ApplicationBuilder):
             print(f"Failed to send startup message: {e}")
 
 def run_bot():
-    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "your_telegram_bot_token_here":
+    """Start the upgraded async TodoXTelegramBot standalone."""
+    from telegram_ui import TodoXTelegramBot, parse_allowed_chat_ids
+
+    allowed_ids = parse_allowed_chat_ids(
+        os.environ.get("ALLOWED_CHAT_IDS", ""),
+        os.environ.get("ADMIN_CHAT_ID", ""),
+    )
+    allow_all = os.environ.get("ALLOW_ALL_CHATS", "false").strip().lower() in ("1", "true", "yes")
+    bot = TodoXTelegramBot(
+        bot_token=TELEGRAM_TOKEN,
+        allowed_chat_ids=allowed_ids,
+        allow_all_chats=allow_all,
+        state_manager=state,
+    )
+    if not bot.is_token_valid():
         print("Telegram token not set. Bot will not function correctly. Exiting bot loop.")
         return
-        
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
-    
-    app.add_handler(CommandHandler("projects", projects_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("sys", sys_command))
-    app.add_handler(CommandHandler("upmodel", upmodel_command))
-    app.add_handler(CommandHandler("output", output_command))
-    app.add_handler(CommandHandler("restart", restart_command))
-    
-    # Catch-all multiline command processor
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'(?m)^/'), handle_multi_line_commands))
-    
-    print("Starting Telegram Bot (VOP Mode)...")
-    app.run_polling()
+
+    print("Starting upgraded TodoX Telegram Bot...")
+    asyncio.run(bot.start())

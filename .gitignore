@@ -1,8 +1,11 @@
 */__pycache__/
 .env
 data/
+runtime/
 .DS_Store
 __pycache__/
 todox_run.log
 todox.log
+todox_web_stdout.log
+todox_web_stderr.log
 output.txt

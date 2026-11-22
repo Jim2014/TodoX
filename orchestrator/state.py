@@ -72,6 +72,8 @@ class SystemState:
         self.interval_seconds: int = 5
         self.backoff_level: int = 0
         self.start_time: str = "Unknown"
+        self.watcher_paused: bool = False
+        self.paused_projects: List[str] = []
 
     def _load(self) -> None:
         self._apply_defaults()
@@ -109,6 +111,10 @@ class SystemState:
             self.interval_seconds = max(1, int(data.get("interval_seconds", 5) or 5))
             self.backoff_level = max(0, int(data.get("backoff_level", 0) or 0))
             self.start_time = str(data.get("start_time", "Unknown") or "Unknown")
+            self.watcher_paused = bool(data.get("watcher_paused", False))
+            raw_paused = data.get("paused_projects", [])
+            if isinstance(raw_paused, list):
+                self.paused_projects = sorted({str(p).strip().upper() for p in raw_paused if str(p).strip()})
         except Exception as exc:
             print(f"[SystemState] Error loading state file: {exc}")
 
@@ -124,6 +130,8 @@ class SystemState:
             "interval_seconds": self.interval_seconds,
             "backoff_level": self.backoff_level,
             "start_time": self.start_time,
+            "watcher_paused": self.watcher_paused,
+            "paused_projects": list(self.paused_projects),
         }
         try:
             parent = os.path.dirname(os.path.abspath(state_file))
@@ -155,6 +163,8 @@ class SystemState:
                 "interval_seconds": self.interval_seconds,
                 "backoff_level": self.backoff_level,
                 "start_time": self.start_time,
+                "watcher_paused": self.watcher_paused,
+                "paused_projects": list(self.paused_projects),
             }
 
     def handle_429(self) -> bool:
@@ -295,6 +305,47 @@ class SystemState:
             self.default_harness = normalized[0]["harness"]
             self.default_model = normalized[0]["model"]
             self._save()
+
+    def is_watcher_paused(self) -> bool:
+        """Return True if global watcher scheduling is paused."""
+        return bool(self.get_state()["watcher_paused"])
+
+    def set_watcher_paused(self, paused: bool) -> bool:
+        """Pause or resume global watcher scheduling."""
+        with self._lock:
+            self._load()
+            self.watcher_paused = bool(paused)
+            self._save()
+            return self.watcher_paused
+
+    def is_project_paused(self, pid: str) -> bool:
+        """Return True if scheduling for pid is paused."""
+        return pid.strip().upper() in self.get_state()["paused_projects"]
+
+    def pause_project(self, pid: str) -> List[str]:
+        """Pause autonomous scheduling for a single project."""
+        clean_pid = pid.strip().upper()
+        with self._lock:
+            self._load()
+            if clean_pid and clean_pid not in self.paused_projects:
+                self.paused_projects.append(clean_pid)
+                self.paused_projects.sort()
+            self._save()
+            return list(self.paused_projects)
+
+    def resume_project(self, pid: str) -> List[str]:
+        """Resume autonomous scheduling for a single project."""
+        clean_pid = pid.strip().upper()
+        with self._lock:
+            self._load()
+            if clean_pid in self.paused_projects:
+                self.paused_projects.remove(clean_pid)
+            self._save()
+            return list(self.paused_projects)
+
+    def get_paused_projects(self) -> List[str]:
+        """Return sorted list of currently paused project IDs."""
+        return list(self.get_state()["paused_projects"])
 
 
 state = SystemState()

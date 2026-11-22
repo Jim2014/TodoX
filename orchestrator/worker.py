@@ -1,4 +1,4 @@
-"""Harness-agnostic AI Worker executor with step lifecycle, validation, and alerts."""
+"""Harness-agnostic AI Worker executor with step lifecycle, validation, and live notifications."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Any, Callable, List, Optional
 
 import httpx
 
+from harness.base import BaseHarness
 from harness.registry import create_default_registry
 from harness.router import HarnessRouter, StepResult, format_event_log_line
 from harness.types import ErrorCategory, HarnessEvent, RunRequest
@@ -70,6 +71,8 @@ async def execute_ai_task_async(
     router: Optional[HarnessRouter] = None,
     timeout_seconds: Optional[int] = None,
     on_event: Optional[Callable[[HarnessEvent], Any]] = None,
+    notifier: Any = None,
+    on_harness_started: Optional[Callable[[BaseHarness], Any]] = None,
 ) -> Optional[StepResult]:
     """Execute one autonomous step for project pid through the configured HarnessRouter."""
     project_task = load_task(pid, f"{pid}-0")
@@ -106,12 +109,15 @@ async def execute_ai_task_async(
         session_id = active_task.execution_meta.session_id
 
     snapshot = snapshot_project_json_files(pid)
+    tracker = await notifier.start_step(pid, active_task.id, profile) if notifier is not None else None
 
     async def _handle_event(event: HarnessEvent) -> None:
         line = format_event_log_line(event)
         if line:
             print(f"[{pid} | {profile.harness}] {line}")
             _append_output_log(output_log_path, line)
+        if notifier is not None and tracker is not None:
+            await notifier.on_event(tracker, event)
         if on_event is not None:
             maybe = on_event(event)
             if inspect.isawaitable(maybe):
@@ -131,7 +137,10 @@ async def execute_ai_task_async(
             f"[{pid}] Executing step via harness '{profile.harness}' "
             f"(model={profile.model}, preset={profile.permission_preset.value}, cwd={project_dir})"
         )
-        result = await active_router.run_step(request, profile=profile, on_event=_handle_event)
+        run_kwargs = {"profile": profile, "on_event": _handle_event}
+        if on_harness_started is not None:
+            run_kwargs["on_harness_started"] = on_harness_started
+        result = await active_router.run_step(request, **run_kwargs)
 
         if result.success:
             json_errors = validate_project_json_files(pid)
@@ -149,7 +158,10 @@ async def execute_ai_task_async(
                     permission_preset=profile.permission_preset,
                     timeout_seconds=min(eff_timeout, 120),
                 )
-                await active_router.run_step(repair_req, profile=profile, on_event=_handle_event)
+                repair_kwargs = {"profile": profile, "on_event": _handle_event}
+                if on_harness_started is not None:
+                    repair_kwargs["on_harness_started"] = on_harness_started
+                await active_router.run_step(repair_req, **repair_kwargs)
                 json_errors = validate_project_json_files(pid)
 
                 if json_errors:
@@ -157,8 +169,8 @@ async def execute_ai_task_async(
                     err_msg = "Post-step JSON validation failed after repair attempt: " + "; ".join(
                         f"{os.path.basename(p)}: {e}" for p, e in json_errors
                     )
-                    fail_active_tasks(pid, err_msg, result.output_lines)
-                    return StepResult(
+                    fail_active_tasks(pid, err_msg, result.output_lines, send_alert=(notifier is None))
+                    failed_res = StepResult(
                         success=False,
                         harness=result.harness,
                         model=result.model,
@@ -172,6 +184,9 @@ async def execute_ai_task_async(
                         tool_events=result.tool_events,
                         output_lines=result.output_lines,
                     )
+                    if notifier is not None and tracker is not None:
+                        await notifier.finish_step(tracker, failed_res, task_after=load_task(pid, active_task.id))
+                    return failed_res
 
             # Reload target task from disk so we never clobber updates written by the AI worker.
             reloaded = load_task(pid, active_task.id) or load_task(pid, f"{pid}-0")
@@ -189,6 +204,8 @@ async def execute_ai_task_async(
 
             print(f"[{pid}] AI Worker step finished successfully via {result.harness}.")
             state.reset_success()
+            if notifier is not None and tracker is not None:
+                await notifier.finish_step(tracker, result, task_after=reloaded)
             return result
 
         if result.error_category == ErrorCategory.RATE_LIMIT:
@@ -198,34 +215,55 @@ async def execute_ai_task_async(
                 result.backoff_triggered = True
                 wait_s = new_state["interval_seconds"]
                 print(f"[{pid}] Rate limit 429 hit on last fallback entry. Backing off for {wait_s}s.")
-                send_telegram_alert(
-                    pid,
-                    f"⏳ [TodoX] Rate Limit 429 hit on all fallback entries. Pausing AI Worker for {wait_s}s.",
-                    result.output_lines,
-                )
+                if notifier is None:
+                    send_telegram_alert(
+                        pid,
+                        f"⏳ [TodoX] Rate Limit 429 hit on all fallback entries. Pausing AI Worker for {wait_s}s.",
+                        result.output_lines,
+                    )
             else:
                 result.fallback_switched = True
                 new_harness = new_state["default_harness"]
                 new_model = new_state["default_model"]
                 print(f"[{pid}] Rate limit 429 hit. Switched fallback to {new_harness} / {new_model}.")
-                send_telegram_alert(
-                    pid,
-                    f"⚠️ [TodoX] Rate Limit 429 hit on {profile.harness}/{profile.model}. "
-                    f"Switched fallback to {new_harness}/{new_model}.",
-                    result.output_lines,
-                )
+                if notifier is None:
+                    send_telegram_alert(
+                        pid,
+                        f"⚠️ [TodoX] Rate Limit 429 hit on {profile.harness}/{profile.model}. "
+                        f"Switched fallback to {new_harness}/{new_model}.",
+                        result.output_lines,
+                    )
+            if notifier is not None and tracker is not None:
+                await notifier.finish_step(tracker, result, task_after=load_task(pid, active_task.id))
             return result
 
         err_msg = result.error_message or f"Execution Failed ({result.error_category.value}): {result.status}"
         print(f"[{pid}] AI Worker step failed ({result.error_category.value}): {err_msg}")
-        fail_active_tasks(pid, err_msg, result.output_lines)
+        fail_active_tasks(pid, err_msg, result.output_lines, send_alert=(notifier is None))
+        if notifier is not None and tracker is not None:
+            await notifier.finish_step(tracker, result, task_after=load_task(pid, active_task.id))
         return result
+
+    except asyncio.CancelledError:
+        err_msg = "Execution cancelled by Admin."
+        fail_active_tasks(pid, err_msg, [], send_alert=(notifier is None))
+        cancel_res = StepResult(
+            success=False,
+            harness=profile.harness,
+            model=profile.model,
+            status="CANCELLED",
+            error_category=ErrorCategory.CANCELLED,
+            error_message=err_msg,
+        )
+        if notifier is not None and tracker is not None:
+            await notifier.finish_step(tracker, cancel_res, task_after=load_task(pid, active_task.id))
+        raise
 
     except Exception as exc:
         print(f"[{pid}] AI Worker failed (system error): {exc}")
         err_msg = f"Execution System Error: {exc}"
-        fail_active_tasks(pid, err_msg, [])
-        return StepResult(
+        fail_active_tasks(pid, err_msg, [], send_alert=(notifier is None))
+        err_res = StepResult(
             success=False,
             harness=profile.harness,
             model=profile.model,
@@ -233,6 +271,9 @@ async def execute_ai_task_async(
             error_category=ErrorCategory.UNKNOWN,
             error_message=err_msg,
         )
+        if notifier is not None and tracker is not None:
+            await notifier.finish_step(tracker, err_res, task_after=load_task(pid, active_task.id))
+        return err_res
 
 
 def execute_ai_task(
@@ -240,12 +281,12 @@ def execute_ai_task(
     router: Optional[HarnessRouter] = None,
     timeout_seconds: Optional[int] = None,
 ) -> Optional[StepResult]:
-    """Synchronous entrypoint invoked by watcher.py background thread."""
+    """Synchronous entrypoint preserved for legacy callers."""
     return asyncio.run(execute_ai_task_async(pid, router=router, timeout_seconds=timeout_seconds))
 
 
 def send_telegram_alert(pid: str, text: str, summary_lines: List[str]) -> None:
-    """Send failure or rate-limit alert and HTML log tail to ADMIN_CHAT_ID via Telegram Bot API."""
+    """Send fallback synchronous alert and HTML log tail to ADMIN_CHAT_ID when notifier is absent."""
     tg_token = os.environ.get("TG_TOKEN")
     admin_chat_id = os.environ.get("ADMIN_CHAT_ID")
     if not (tg_token and admin_chat_id):
@@ -279,8 +320,13 @@ def send_telegram_alert(pid: str, text: str, summary_lines: List[str]) -> None:
         print(f"[{pid}] Failed to send Telegram alert: {exc}")
 
 
-def fail_active_tasks(pid: str, error_msg: str, summary_lines: List[str]) -> None:
-    """Mark active AI tasks failed, hand control back to Admin, and alert Telegram."""
+def fail_active_tasks(
+    pid: str,
+    error_msg: str,
+    summary_lines: List[str],
+    send_alert: bool = True,
+) -> None:
+    """Mark active AI tasks failed, hand control back to Admin, and optionally alert Telegram."""
     tasks_to_fail: List[Task] = []
 
     root_task = load_task(pid, f"{pid}-0")
@@ -316,9 +362,10 @@ def fail_active_tasks(pid: str, error_msg: str, summary_lines: List[str]) -> Non
         )
         save_task(pid, t)
 
-    failed_tids = ", ".join(t.id for t in tasks_to_fail)
-    alert_text = f"🚨 [TodoX] Project {pid} Execution Failed!\nTasks affected: {failed_tids}\nError: {error_msg}"
-    send_telegram_alert(pid, alert_text, summary_lines)
+    if send_alert:
+        failed_tids = ", ".join(t.id for t in tasks_to_fail)
+        alert_text = f"🚨 [TodoX] Project {pid} Execution Failed!\nTasks affected: {failed_tids}\nError: {error_msg}"
+        send_telegram_alert(pid, alert_text, summary_lines)
 
 
 if __name__ == "__main__":

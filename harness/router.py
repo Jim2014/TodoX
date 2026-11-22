@@ -149,6 +149,7 @@ class HarnessRouter:
         profile: Optional[HarnessProfile] = None,
         on_event: Optional[Callable[[HarnessEvent], Any]] = None,
         harness_instance: Optional[BaseHarness] = None,
+        on_harness_started: Optional[Callable[[BaseHarness], Any]] = None,
     ) -> StepResult:
         """Execute a single TodoX step through the resolved harness and aggregate results."""
         eff_profile = profile or self._global_profile()
@@ -199,6 +200,11 @@ class HarnessRouter:
         saw_error = False
 
         try:
+            if on_harness_started is not None:
+                maybe_started = on_harness_started(harness)
+                if inspect.isawaitable(maybe_started):
+                    await maybe_started
+
             async for event in harness.run_stream(effective_request):
                 if on_event is not None:
                     maybe_coro = on_event(event)

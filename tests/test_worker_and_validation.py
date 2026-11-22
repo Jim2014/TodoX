@@ -36,7 +36,7 @@ class _ScriptedRouter(HarnessRouter):
         self._outcomes = list(outcomes)
         self.calls = []
 
-    async def run_step(self, request, profile=None, on_event=None, harness_instance=None):
+    async def run_step(self, request, profile=None, on_event=None, harness_instance=None, on_harness_started=None, **kwargs):
         self.calls.append((request, profile))
         action = self._outcomes.pop(0)
         return action(request, profile)
