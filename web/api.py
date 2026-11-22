@@ -2,6 +2,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from orchestrator.storage import (
     get_data_dir,
+    get_default_worker_prompt,
     create_project, delete_project, update_project,
     create_task, delete_task, update_task,
     add_comment, delete_comment, update_comment
@@ -17,13 +18,8 @@ router = APIRouter()
 @router.post("/api/projects")
 def api_create_project(data: ProjectCreate):
     pid = data.pid.upper()
-    prompt_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "orchestrator", "prompts", "default_gemini.md")
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        seed_prompt = f.read()
+    seed_prompt = get_default_worker_prompt()
     create_project(pid, data.title, data.desc, seed_prompt)
-    gemini_md_path = os.path.join(get_data_dir(), "projects", pid, "GEMINI.md")
-    with open(gemini_md_path, "w", encoding="utf-8") as f:
-        f.write(seed_prompt)
     return {"status": "success", "pid": pid}
 
 @router.delete("/api/projects/{pid}")

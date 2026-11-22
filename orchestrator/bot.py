@@ -16,10 +16,10 @@ from .storage import (
     load_projects, load_task, save_task, create_project,
     delete_project, update_project, create_task, delete_task,
     update_task, add_comment, delete_comment, update_comment,
-    get_data_dir
+    get_data_dir, get_default_worker_prompt,
 )
 from .models import Comment
-from .gemini_runner import run_gemini_cli_stream
+from harness import HarnessProfile, HarnessRouter, RunRequest, create_default_registry, format_event_log_line
 
 load_dotenv()
 TELEGRAM_TOKEN = os.environ.get("TG_TOKEN", "")
@@ -65,20 +65,8 @@ async def handle_new_project(update: Update, args: dict):
         await update.message.reply_text(f"Error: Project {pid} already exists.")
         return
         
-    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "default_gemini.md")
-    seed_prompt = ""
-    if os.path.exists(prompt_path):
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            seed_prompt = f.read()
-            
+    seed_prompt = get_default_worker_prompt()
     create_project(pid, title, desc, seed_prompt)
-    
-    gemini_md_path = os.path.join(get_data_dir(), "projects", pid, "GEMINI.md")
-    if seed_prompt:
-        os.makedirs(os.path.dirname(gemini_md_path), exist_ok=True)
-        with open(gemini_md_path, "w", encoding="utf-8") as f:
-            f.write(seed_prompt)
-            
     await update.message.reply_text(f"Project {pid} created: {title}")
 
 async def handle_new_task(update: Update, args: dict):
@@ -278,6 +266,60 @@ async def handle_get_file(update: Update, args: dict):
                 await update.message.reply_document(document=f, filename=os.path.basename(path))
     else:
         await update.message.reply_text(f"Error: File '{path}' not found in project {pid}.")
+
+
+async def run_harness_fix_stream(
+    instruction: str,
+    cwd: str,
+    send_chunk_callback,
+    log_callback=None,
+    harness_name: str = None,
+    model: str = None,
+    out_lines: int = 10,
+):
+    """Execute JSON repair via HarnessRouter while streaming buffered HTML chunks."""
+    eff_harness = harness_name or state.get_current_harness()
+    eff_model = model if model is not None else state.get_current_model()
+    router = HarnessRouter(registry=create_default_registry(), state_manager=state)
+    profile = HarnessProfile(harness=eff_harness, model=eff_model)
+    chunk_buffer = []
+
+    async def on_event(event):
+        line = format_event_log_line(event)
+        if not line:
+            return
+        if log_callback:
+            log_callback(line)
+        if out_lines > 0:
+            chunk_buffer.append(line)
+            if len(chunk_buffer) >= out_lines:
+                chunk = "\n".join(chunk_buffer)
+                chunk_buffer.clear()
+                chunk_html = html.escape(chunk)
+                if len(chunk_html) > 4000:
+                    chunk_html = chunk_html[:4000] + "..."
+                await send_chunk_callback(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>")
+
+    result = await router.run_step(
+        RunRequest(prompt=instruction, working_dir=cwd, model=eff_model),
+        profile=profile,
+        on_event=on_event,
+    )
+
+    if out_lines > 0 and chunk_buffer:
+        chunk = "\n".join(chunk_buffer)
+        chunk_buffer.clear()
+        chunk_html = html.escape(chunk)
+        if len(chunk_html) > 4000:
+            chunk_html = chunk_html[:4000] + "..."
+        await send_chunk_callback(f"<pre><code class=\"language-text\">{chunk_html}</code></pre>")
+
+    if not result.success:
+        raise RuntimeError(result.error_message or f"Harness '{eff_harness}' failed with status {result.status}")
+
+    return result.output_lines
+
+
 async def handle_fix_data(update: Update, args: dict):
     data_dir = get_data_dir()
     projects_dir = os.path.join(data_dir, "projects")
@@ -318,37 +360,36 @@ async def handle_fix_data(update: Update, args: dict):
         await update.message.reply_text("✅ All json files in all projects are valid.")
         return
 
-    # Found errors, trigger gcli
     error_details = "\n".join([f"- {path}: {err}" for path, err in errors])
     prompt = (
         f"Check the following JSON files across the system which have formatting errors:\n"
         f"{error_details}\n\n"
         "Please fix the JSON format errors and update the files. Ensure the output is valid JSON."
     )
-    
-    # Send an initial message
-    await update.message.reply_text(f"Found {len(errors)} JSON errors. Invoking Gemini CLI to fix...")
-    
+
+    harness_name = state.get_current_harness()
+    await update.message.reply_text(f"Found {len(errors)} JSON errors. Invoking AI harness ({harness_name}) to fix...")
+
     try:
         async def send_chunk(chunk_html):
             try:
                 await update.message.reply_text(chunk_html, parse_mode='HTML')
             except Exception as e:
                 print(f"EXCEPTION sending chunk: {e}")
-                
-        all_output = await run_gemini_cli_stream(
+
+        await run_harness_fix_stream(
             instruction=prompt,
-            model="gemini-2.5-flash", # fast model for fixing data
-            out_lines=10,
+            cwd=data_dir,
             send_chunk_callback=send_chunk,
             log_callback=print,
-            cwd=data_dir
+            harness_name=harness_name,
+            out_lines=10,
         )
-        
-        await update.message.reply_text(f"✅ Gemini CLI finished working on fixes.")
-        
+
+        await update.message.reply_text(f"✅ AI harness ({harness_name}) finished working on fixes.")
+
     except Exception as e:
-        await update.message.reply_text(f"❌ Failed to run Gemini CLI: {e}\n{traceback.format_exc()}")
+        await update.message.reply_text(f"❌ Failed to run AI harness ({harness_name}): {e}\n{traceback.format_exc()}")
 
 COMMAND_MAP = {
     '/new-project': handle_new_project,
@@ -400,19 +441,22 @@ from .state import state
 
 async def sys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = state.get_state()
-    models = state.get_all_models()
-    
+    chain = state.get_fallback_chain()
+
     models_list = "\n".join([
-        f"{'✅' if i == current['model_index'] else '⬜️'} [{i}] {m}" 
-        for i, m in enumerate(models)
+        f"{'✅' if i == current['model_index'] else '⬜️'} [{i}] {entry['harness']} / {entry['model']}"
+        for i, entry in enumerate(chain)
     ])
-    
+
     text = (
         "⚙️ *System State*\n\n"
         f"⏳ System Uptime Started: `{current.get('start_time', 'Unknown')}`\n"
+        f"🔌 Default Harness: `{current.get('default_harness', 'agy')}`\n"
         f"🤖 Current Model: `{current['current_model']}` (Index: {current['model_index']})\n"
+        f"🧠 Reasoning Effort: `{current.get('default_effort', 'high')}`\n"
+        f"🛡️ Permission Preset: `{current.get('default_permission_preset', 'auto')}`\n"
         f"⏱️ Watcher Interval: `{current['interval_seconds']}s`\n\n"
-        "📋 *Available Models:*\n"
+        "📋 *Fallback Chain / Available Models:*\n"
         f"{models_list}"
     )
     await update.message.reply_text(text, parse_mode='Markdown')

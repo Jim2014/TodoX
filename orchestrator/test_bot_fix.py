@@ -1,94 +1,76 @@
-import os
-import json
 import asyncio
-from unittest.mock import AsyncMock, patch
-from telegram import Update, Message
+import json
+import os
+import sys
+import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Import the handler from the main project
+from telegram import Message, Update
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import orchestrator.bot as bot_module
 from orchestrator.bot import handle_fix_data
 
+
 async def run_test():
-    # Setup mock update
     update = AsyncMock(spec=Update)
     update.message = AsyncMock(spec=Message)
-    
-    import orchestrator.bot as bot_module
-    
-    # Create test data dir
-    test_data_dir = "./test_data"
-    test_pid = "TESTBOT"
-    
-    import shutil
-    if os.path.exists(test_data_dir):
-        shutil.rmtree(test_data_dir)
-        
-    os.makedirs(os.path.join(test_data_dir, "projects", test_pid, "tasks", "TESTBOT-1"), exist_ok=True)
-    with open(os.path.join(test_data_dir, "projects", test_pid, "project.json"), "w") as f:
-        json.dump({"title": "Test Title"}, f)
-    with open(os.path.join(test_data_dir, "projects", test_pid, "tasks", "TESTBOT-1", "task.json"), "w") as f:
-        json.dump({"title": "Test Task 1"}, f)
-    
-    # 1. Test data dir not found
-    args = {}
-    with patch('orchestrator.bot.get_data_dir', return_value="./nonexistent_data"):
-        await handle_fix_data(update, args)
-        update.message.reply_text.assert_called_with("Data directory not found.")
-        
-    # 2. Test everything valid. Remove the bad files from step 1 first.
-    with open(os.path.join(test_data_dir, "projects", test_pid, "project.json"), "w") as f:
-        json.dump({"title": "Test Title"}, f)
-    with open(os.path.join(test_data_dir, "projects", test_pid, "tasks", "TESTBOT-1", "task.json"), "w") as f:
-        json.dump({"title": "Test Task 1"}, f)
-        
-    args = {}
-    with patch('orchestrator.bot.get_data_dir', return_value=test_data_dir), \
-         patch.object(bot_module, 'run_gemini_cli_stream', new_callable=AsyncMock) as mock_exec:
-        await handle_fix_data(update, args)
-        update.message.reply_text.assert_called_with("✅ All json files in all projects are valid.")
 
-    update.message.reply_text.reset_mock()
-    if isinstance(mock_exec, AsyncMock):
-        mock_exec.reset_mock()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_pid = "TESTBOT"
+        os.makedirs(os.path.join(tmpdir, "projects", test_pid, "tasks", "TESTBOT-1"), exist_ok=True)
+        with open(os.path.join(tmpdir, "projects", test_pid, "project.json"), "w", encoding="utf-8") as f:
+            json.dump({"id": "TESTBOT-0", "title": "Test Title"}, f)
+        with open(os.path.join(tmpdir, "projects", test_pid, "tasks", "TESTBOT-1", "task.json"), "w", encoding="utf-8") as f:
+            json.dump({"id": "TESTBOT-1", "title": "Test Task 1"}, f)
 
-    # 3. Test invalid json
-    with open(os.path.join(test_data_dir, "projects", test_pid, "project.json"), "w") as f:
-        f.write("{ bad json ")
-        
-    # We mock asyncio.create_subprocess_exec to simulate the cli returning something
-    mock_process = AsyncMock()
-    mock_process.communicate.return_value = (b"Simulated output from gemini cli", b"")
-    
-    with patch('orchestrator.bot.get_data_dir', return_value=test_data_dir), \
-         patch.object(bot_module, 'run_gemini_cli_stream', new_callable=AsyncMock) as mock_exec:
-        
-        mock_exec.return_value = ["Simulated output from gemini cli"]
-        
-        await handle_fix_data(update, args)
-        
-        # Verify initial message was sent
-        update.message.reply_text.assert_any_call("Found 1 JSON errors. Invoking Gemini CLI to fix...")
-        
-        # Verify gemini cmd
-        mock_exec.assert_called_once()
-        call_kwargs = mock_exec.call_args.kwargs
-        assert call_kwargs["model"] == "gemini-2.5-flash"
-        assert call_kwargs["out_lines"] == 10
-        assert "- ./test_data/projects/TESTBOT/project.json:" in call_kwargs["instruction"]
-        
-        # Simulate sending a chunk to the callback defined inside the function
-        send_chunk_cb = call_kwargs["send_chunk_callback"]
-        await send_chunk_cb("<pre><code class=\"language-text\">Simulated output from gemini cli</code></pre>")
-        
-        # Verify final msg from chunk callback was sent correctly
-        update.message.reply_text.assert_any_call(
-            "<pre><code class=\"language-text\">Simulated output from gemini cli</code></pre>", 
-            parse_mode='HTML'
-        )
-        
-        # Verify completely finished text
-        update.message.reply_text.assert_any_call("✅ Gemini CLI finished working on fixes.")
-        
+        # 1. Data dir not found
+        with patch("orchestrator.bot.get_data_dir", return_value=os.path.join(tmpdir, "missing")):
+            await handle_fix_data(update, {})
+            update.message.reply_text.assert_called_with("Data directory not found.")
+
+        update.message.reply_text.reset_mock()
+
+        # 2. All JSON valid
+        with patch("orchestrator.bot.get_data_dir", return_value=tmpdir), \
+             patch.object(bot_module, "run_harness_fix_stream", new_callable=AsyncMock) as mock_exec:
+            await handle_fix_data(update, {})
+            update.message.reply_text.assert_called_with("✅ All json files in all projects are valid.")
+            mock_exec.assert_not_called()
+
+        update.message.reply_text.reset_mock()
+
+        # 3. Invalid JSON triggers harness repair flow
+        with open(os.path.join(tmpdir, "projects", test_pid, "project.json"), "w", encoding="utf-8") as f:
+            f.write("{ bad json ")
+
+        mock_state = MagicMock()
+        mock_state.get_current_harness.return_value = "agy"
+
+        with patch("orchestrator.bot.get_data_dir", return_value=tmpdir), \
+             patch.object(bot_module, "state", mock_state), \
+             patch.object(bot_module, "run_harness_fix_stream", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = ["Fixed project.json"]
+            await handle_fix_data(update, {})
+
+            update.message.reply_text.assert_any_call("Found 1 JSON errors. Invoking AI harness (agy) to fix...")
+            mock_exec.assert_called_once()
+            call_kwargs = mock_exec.call_args.kwargs
+            assert call_kwargs["harness_name"] == "agy"
+            assert call_kwargs["out_lines"] == 10
+            assert "project.json" in call_kwargs["instruction"]
+
+            send_chunk_cb = call_kwargs["send_chunk_callback"]
+            await send_chunk_cb('<pre><code class="language-text">Simulated output from agy harness</code></pre>')
+            update.message.reply_text.assert_any_call(
+                '<pre><code class="language-text">Simulated output from agy harness</code></pre>',
+                parse_mode="HTML",
+            )
+            update.message.reply_text.assert_any_call("✅ AI harness (agy) finished working on fixes.")
+
     print("All tests passed!")
+
 
 if __name__ == "__main__":
     asyncio.run(run_test())

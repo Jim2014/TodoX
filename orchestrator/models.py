@@ -1,16 +1,46 @@
-from pydantic import BaseModel, Field
-from typing import List, Literal, Optional, Dict
+"""Pydantic data models for TodoX projects, tasks, comments, and optional harness metadata."""
 
-TaskStatus = Literal['not_started', 'in_progress', 'blocked', 'need_confirm', 'complete', 'failed']
+from __future__ import annotations
+
+from typing import List, Literal, Optional
+from pydantic import BaseModel, Field
+
+TaskStatus = Literal["not_started", "in_progress", "blocked", "need_confirm", "complete", "failed"]
+
 
 class Comment(BaseModel):
     author: str
     time: str
     content: str
 
+
+class HarnessConfig(BaseModel):
+    """Optional per-project or per-task harness routing overrides."""
+
+    harness: Optional[str] = None
+    model: Optional[str] = None
+    effort: Optional[str] = None
+    permission_preset: Optional[str] = None
+    session_mode: Optional[Literal["stateless", "sticky"]] = None
+
+
+class ExecutionMeta(BaseModel):
+    """Optional execution telemetry persisted on project/task state files."""
+
+    last_harness: Optional[str] = None
+    last_model: Optional[str] = None
+    session_id: Optional[str] = None
+    total_steps: int = 0
+    total_tokens: int = 0
+    total_duration_seconds: float = 0.0
+    last_run_at: Optional[str] = None
+
+
 class Task(BaseModel):
+    """Core 9-Field Schema with backwards-compatible optional v2 harness metadata."""
+
     id: str
-    status: TaskStatus = 'not_started'
+    status: TaskStatus = "not_started"
     title: str = ""
     descriptions: str = ""
     creator: str = "Admin"
@@ -18,6 +48,9 @@ class Task(BaseModel):
     parent_id: Optional[str] = None
     child_ids: List[str] = Field(default_factory=list)
     comments: List[Comment] = Field(default_factory=list)
+    harness_config: Optional[HarnessConfig] = None
+    execution_meta: Optional[ExecutionMeta] = None
+
 
 class ProjectSummary(BaseModel):
     id: str
