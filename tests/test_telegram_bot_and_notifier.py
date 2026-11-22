@@ -35,6 +35,8 @@ class _MockTelegramClient:
         self.callback_answers = []
         self.reactions = []
         self.pinned = []
+        self.unpinned = []
+        self.unpinned_all = []
         self.commands = []
         self.closed = False
 
@@ -71,6 +73,14 @@ class _MockTelegramClient:
 
     async def pin_chat_message(self, chat_id=None, message_id=None, **kwargs):
         self.pinned.append({"chat_id": chat_id, "message_id": message_id, **kwargs})
+        return True
+
+    async def unpin_chat_message(self, chat_id=None, message_id=None, **kwargs):
+        self.unpinned.append({"chat_id": chat_id, "message_id": message_id, **kwargs})
+        return True
+
+    async def unpin_all_chat_messages(self, chat_id=None, **kwargs):
+        self.unpinned_all.append(chat_id)
         return True
 
     async def send_chat_action(self, chat_id=None, action="typing", **kwargs):
@@ -237,6 +247,19 @@ class TestTelegramBotAndNotifier(unittest.IsolatedAsyncioTestCase):
 
         await self.bot.process_update({"message": {"message_id": 18, "chat": {"id": 100}, "text": "/pin"}})
         self.assertEqual(len(self.client.pinned), 1)
+        await self.bot.process_update({"message": {"message_id": 19, "chat": {"id": 100}, "text": "/pin"}})
+        self.assertEqual(len(self.client.pinned), 2)
+        self.assertEqual(len(self.client.unpinned), 1)
+        await self.bot.process_update({"message": {"message_id": 20, "chat": {"id": 100}, "text": "/unpin"}})
+        self.assertEqual(self.client.unpinned_all, [100])
+
+    async def test_startup_notification_does_not_auto_pin(self):
+        self.client.sent_messages.clear()
+        self.client.pinned.clear()
+        await self.bot._notify_startup()
+        self.assertEqual(len(self.client.sent_messages), 1)
+        self.assertIn("TodoX Orchestrator Online", self.client.sent_messages[0]["text"])
+        self.assertEqual(len(self.client.pinned), 0)
 
     async def test_legacy_vop_batch_commands_compatibility(self):
         batch = (

@@ -273,13 +273,16 @@ class TodoXTelegramBot:
         return text, build_pinned_banner_keyboard(paused_global)
 
     async def update_pinned_banner(self, chat_id: int, force_repin: bool = False) -> Optional[int]:
-        """Update or pin the live TodoX orchestrator dashboard banner."""
+        """Update or manually pin the live TodoX orchestrator dashboard banner."""
         text, markup = self._render_dashboard_payload()
         existing_id = self.pinned_message_ids.get(chat_id)
         if existing_id and not force_repin:
             res = await self._send_or_edit(chat_id, text, reply_markup=markup, edit_message_id=existing_id)
             if res:
                 return existing_id
+
+        if existing_id and force_repin:
+            await self.client.unpin_chat_message(chat_id=chat_id, message_id=existing_id)
 
         sent = await self._safe_send(chat_id, text, reply_markup=markup, disable_notification=True)
         if sent and sent.get("message_id"):
@@ -296,18 +299,24 @@ class TodoXTelegramBot:
         return ok
 
     async def _notify_startup(self) -> None:
-        """Send startup greeting and dashboard to authorized admin chats."""
+        """Send concise startup greeting without auto-pinning messages."""
         for chat_id in sorted(self.allowed_chat_ids):
             st = self.state_manager.get_state()
+            active_pid = self._get_active_project(chat_id)
+            active_line = (
+                f"\n• <b>Active Project:</b> <code>{escape_html(active_pid)}</code>"
+                if active_pid
+                else ""
+            )
             await self._safe_send(
                 chat_id,
                 "🚀 <b>TodoX Orchestrator Online</b>\n"
                 f"• <b>Harness:</b> <code>{escape_html(st['default_harness'])}</code> "
                 f"(<code>{escape_html(st['default_model'])}</code>)\n"
-                f"• <b>Permissions:</b> <code>{escape_html(st['default_permission_preset'])}</code>\n"
-                "Use /help or /projects to manage tasks.",
+                f"• <b>Permissions:</b> <code>{escape_html(st['default_permission_preset'])}</code>"
+                f"{active_line}\n"
+                "Use /projects or /use &lt;PID&gt; to switch projects and chat/speak directly.",
             )
-            await self.update_pinned_banner(chat_id)
 
     async def start(self) -> None:
         """Run the async Telegram long-polling loop with 409 backoff."""
@@ -802,6 +811,14 @@ class TodoXTelegramBot:
             await self._cmd_status(chat_id)
         elif clean == "pin":
             await self.update_pinned_banner(chat_id, force_repin=True)
+        elif clean == "unpin":
+            ok = await self.client.unpin_all_chat_messages(chat_id)
+            self.pinned_message_ids.pop(chat_id, None)
+            await self._safe_send(
+                chat_id,
+                "✅ Unpinned all pinned messages in this chat." if ok else "⚠️ Could not unpin messages in this chat.",
+                reply_to_message_id=message_id,
+            )
         elif clean == "harness":
             await self._cmd_harness(chat_id, arg)
         elif clean == "model":

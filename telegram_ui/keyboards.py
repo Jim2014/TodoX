@@ -25,7 +25,6 @@ BOT_COMMANDS: List[Dict[str, str]] = [
     {"command": "steer", "description": "Guide a running worker or append comment"},
     {"command": "output", "description": "View recent worker log lines"},
     {"command": "fix_data", "description": "Validate and repair project JSON files"},
-    {"command": "pin", "description": "Pin live orchestrator dashboard"},
     {"command": "restart", "description": "Restart TodoX orchestrator service"},
 ]
 
@@ -68,7 +67,7 @@ def build_help_text() -> str:
         "• <code>/steer [PID] &lt;msg&gt;</code> — Steer active worker or queue Admin comment\n"
         "• <code>/output [lines]</code> — View tail of worker execution log\n"
         "• <code>/fix_data</code> — Scan and repair malformed JSON files\n"
-        "• <code>/pin</code> — Pin live status dashboard to top of chat\n\n"
+        "• <code>/pin</code> / <code>/unpin</code> — Optionally pin or clear top status dashboard\n\n"
         "<b>Batch VOP Commands:</b>\n"
         "• <code>/new-project -pid ID -title \"...\" -des \"...\"</code>\n"
         "• <code>/new-task -pid ID -ptid ID-0 -title \"...\" -des \"...\"</code>\n"

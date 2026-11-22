@@ -78,7 +78,7 @@ This project uses the Conda environment named **`todox`** (defined in `environme
    - `/projects` — Browse, inspect, pause, or assign projects via inline cards
    - `/use [PID]` — Switch active project for conversational text & voice messages (shows Current Project Briefing)
    - `/summary [PID]` — Generate a fresh read-only AI executive briefing for the active or target project
-   - `/status` & `/pin` — View or pin the live orchestrator dashboard
+   - `/status` — View live orchestrator dashboard (optional `/pin` and `/unpin` manage pinned status messages)
    - `/harness`, `/model`, `/effort`, `/permissions` — Configure active CLI harness, model, reasoning effort, and sandbox preset
    - `/pause [PID]` / `/resume [PID]` — Pause or resume watcher scheduling
    - `/stop [PID]` & `/steer [PID] <msg>` — Interrupt or guide an active worker

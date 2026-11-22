@@ -107,10 +107,15 @@ class TestTelegramClientAndFormatter(unittest.IsolatedAsyncioTestCase):
         mock_http.post = AsyncMock(return_value=r_not_mod)
         self.assertIsNone(await client.edit_message_text(chat_id=100, message_id=10, text="Same"))
 
-        # 6. send_document MIME and upload
+        # 6. send_document MIME and upload + unpin_all_chat_messages
         mock_http.post = AsyncMock(return_value=r_ok)
         doc_res = await client.send_document(chat_id=100, document_content=b"<html></html>", filename="report.html")
         self.assertEqual(doc_res["message_id"], 11)
+        r_unpin = MagicMock()
+        r_unpin.status_code = 200
+        r_unpin.json.return_value = {"ok": True, "result": True}
+        mock_http.post = AsyncMock(return_value=r_unpin)
+        self.assertTrue(await client.unpin_all_chat_messages(100))
         await client.close()
 
     def test_formatter_cards_and_html_balancing(self):

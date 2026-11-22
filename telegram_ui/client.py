@@ -585,6 +585,14 @@ class TelegramClient:
         except Exception:
             return False
 
+    async def unpin_all_chat_messages(self, chat_id: int) -> bool:
+        """Unpin all pinned messages in the chat."""
+        try:
+            res = await self._post("unpinAllChatMessages", {"chat_id": chat_id})
+            return bool(res)
+        except Exception:
+            return False
+
 
 if __name__ == "__main__":
     async def _main() -> None:
