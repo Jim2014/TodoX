@@ -13,8 +13,9 @@ from harness.base import BaseHarness
 from harness.registry import create_default_registry
 from harness.router import HarnessRouter
 
+from .event_bus import clear_stale_worker_runtime, drain_control_commands, publish_event
 from .state import SystemState, state as default_state
-from .storage import get_data_dir, load_projects, load_task
+from .storage import add_comment, get_data_dir, load_projects, load_task
 from .worker import execute_ai_task, execute_ai_task_async
 
 
@@ -228,15 +229,58 @@ class AsyncWatcher:
         ok = await harness.steer(message)
         return ok, "steered" if ok else "steer_failed"
 
+    async def process_control_commands(self) -> int:
+        """Drain and apply queued Web UI worker control actions (trigger/stop/steer)."""
+        commands = drain_control_commands()
+        if not commands:
+            return 0
+
+        handled = 0
+        for cmd in commands:
+            action = str(cmd.get("action") or "").strip().lower()
+            pid = str(cmd.get("pid") or "").strip().upper()
+            message = str(cmd.get("message") or "").strip()
+            if not pid:
+                continue
+
+            if action == "trigger":
+                if self.state_manager.is_project_paused(pid):
+                    self.state_manager.resume_project(pid)
+                if await self.trigger_project(pid):
+                    handled += 1
+            elif action == "stop":
+                if await self.stop_project(pid):
+                    handled += 1
+            elif action == "steer":
+                ok, _ = await self.steer_project(pid, message)
+                if not ok and message:
+                    add_comment(pid, f"{pid}-0", "Admin (Steer)", message)
+                    publish_event(
+                        "board_change",
+                        pid=pid,
+                        tid=f"{pid}-0",
+                        message="Queued steering comment for next worker step",
+                    )
+                elif ok:
+                    publish_event(
+                        "control_action",
+                        pid=pid,
+                        message=f"Steered running worker: {message[:100]}",
+                    )
+                handled += 1
+        return handled
+
     async def run_loop(self) -> None:
         """Run the async watcher scheduling loop until stop() is called."""
         self.running = True
         self._stop_event.clear()
+        clear_stale_worker_runtime(self.running_pids())
         last_commit_time = time.time()
         print(f"Starting AsyncWatcher loop (max_concurrent_workers={self.max_concurrent_workers})")
 
         while self.running and not self._stop_event.is_set():
             try:
+                await self.process_control_commands()
                 await self.scan_once()
             except Exception as exc:
                 print(f"AsyncWatcher scan error: {exc}")
@@ -249,11 +293,20 @@ class AsyncWatcher:
                     print(f"AsyncWatcher auto-commit error: {exc}")
                 last_commit_time = now
 
-            interval = self.state_manager.get_interval()
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
-            except asyncio.TimeoutError:
-                pass
+            deadline = time.time() + self.state_manager.get_interval()
+            while self.running and not self._stop_event.is_set():
+                try:
+                    await self.process_control_commands()
+                except Exception as exc:
+                    print(f"AsyncWatcher control queue error: {exc}")
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=min(0.5, remaining))
+                    break
+                except asyncio.TimeoutError:
+                    pass
 
     async def stop(self) -> None:
         """Stop the watcher loop and terminate any active worker tasks."""

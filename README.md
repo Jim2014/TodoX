@@ -15,8 +15,12 @@ TodoX is an AI-driven project management and development orchestrator built on a
   - **Offline Mobile HTML File Viewers**: Renders Markdown, diffs, and source code into self-contained dark/light HTML reports without external CDN dependencies.
   - **Deny-by-Default Security**: Enforces `ALLOWED_CHAT_IDS` / `ADMIN_CHAT_ID` on all incoming messages and inline callbacks (`ALLOW_ALL_CHATS=false` by default).
   - **Batch VOP Compatibility**: Retains full support for multi-line VOP commands (`/new-project`, `/new-task`, `/update-task`, `/new-comment`, `/get-project`, `/get-file`, `/fix-data`).
+- **Modern Offline Kanban Board + Real-Time SSE Web UI (`web/`, `orchestrator/event_bus.py`)**:
+  - **Project Hub & 5-Column Kanban Board**: Responsive multi-project dashboard, progress bars, drag-and-drop columns (`Backlog`, `In Progress`, `Needs Review`, `Done`, `Failed`), one-click **Run AI** / **Approve** / **Stop** controls, and per-task **Slide-Over Inspector** with Markdown rendering and optional Harness/Model/Preset overrides.
+  - **Cross-Process Live SSE Stream (`DATA_DIR/live_events.jsonl`, `web_control.jsonl`)**: Streams real-time worker tool execution (`ACTIVE`/`DONE`), output tokens, and board updates to the browser via Server-Sent Events (`/api/events/stream`), with live **Steer** and **Stop** worker controls.
+  - **Integrated File Explorer & Preview + Offline Theme Toggle**: Searchable workspace tree with in-browser live HTML, offline Markdown, and syntax-highlighted code previews, plus system/light/dark theme switching (`<meta name="color-scheme">`) and zero external CDN dependencies.
 - **Concurrent Async Watcher & Post-Step JSON Guardrails**:
-  - `AsyncWatcher` executes independent projects concurrently with per-project locks, concurrency limits, pre-step JSON snapshots, post-step syntax + Pydantic validation, automatic single-shot JSON repair, and snapshot rollback on persistent corruption.
+  - `AsyncWatcher` executes independent projects concurrently with per-project locks, concurrency limits, 0.5s Web control queue polling, pre-step JSON snapshots, post-step syntax + Pydantic validation, automatic single-shot JSON repair, and snapshot rollback on persistent corruption.
 
 ## Prerequisites & Installation
 
@@ -76,7 +80,7 @@ Every module can be verified independently from the command line without startin
 
 ```bash
 # Run isolated unit & integration tests
-conda run -n todox python -m unittest tests/test_harness_types.py tests/test_agy_harness.py tests/test_harness_router_and_state.py tests/test_worker_and_validation.py tests/test_telegram_client_and_formatter.py tests/test_telegram_bot_and_notifier.py tests/test_async_watcher.py -v
+conda run -n todox python -m unittest tests/test_harness_types.py tests/test_agy_harness.py tests/test_harness_router_and_state.py tests/test_worker_and_validation.py tests/test_telegram_client_and_formatter.py tests/test_telegram_bot_and_notifier.py tests/test_async_watcher.py tests/test_web_kanban_and_sse.py -v
 
 # Run standalone module checks
 conda run -n todox python -m harness.types
@@ -92,8 +96,13 @@ conda run -n todox python -m telegram_ui.notifier
 conda run -n todox python -m telegram_ui.bot
 conda run -n todox python -m orchestrator.state
 conda run -n todox python -m orchestrator.storage
+conda run -n todox python -m orchestrator.event_bus
 conda run -n todox python -m orchestrator.worker
 conda run -n todox python -m orchestrator.watcher
+conda run -n todox python -m web.models
+conda run -n todox python -m web.api
+conda run -n todox python -m web.views
+conda run -n todox python -m web.app
 conda run -n todox python orchestrator/test_bot_fix.py
 ```
 

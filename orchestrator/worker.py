@@ -7,6 +7,7 @@ import html
 import inspect
 import os
 import tempfile
+import time
 from datetime import datetime
 from typing import Any, Callable, List, Optional
 
@@ -17,6 +18,12 @@ from harness.registry import create_default_registry
 from harness.router import HarnessRouter, StepResult, format_event_log_line
 from harness.types import ErrorCategory, HarnessEvent, RunRequest
 
+from .event_bus import (
+    mark_worker_finished,
+    mark_worker_started,
+    publish_event,
+    update_worker_activity,
+)
 from .models import Comment, ExecutionMeta, Task
 from .state import state
 from .storage import (
@@ -111,11 +118,79 @@ async def execute_ai_task_async(
     snapshot = snapshot_project_json_files(pid)
     tracker = await notifier.start_step(pid, active_task.id, profile) if notifier is not None else None
 
+    tool_count = 0
+    text_buf: List[str] = []
+    last_text_flush = time.time()
+
+    def _flush_text_buf(force: bool = False) -> None:
+        nonlocal last_text_flush
+        if not text_buf:
+            return
+        chunk = "".join(text_buf)
+        if not force and len(chunk) < 120 and "\n" not in chunk and (time.time() - last_text_flush) < 0.4:
+            return
+        publish_event(
+            "text_delta",
+            pid=pid,
+            tid=active_task.id,
+            harness=profile.harness,
+            model=profile.model or "default",
+            message=chunk,
+        )
+        text_buf.clear()
+        last_text_flush = time.time()
+
+    mark_worker_started(
+        pid=pid,
+        tid=active_task.id,
+        harness=profile.harness,
+        model=profile.model,
+        preset=profile.permission_preset.value,
+    )
+    publish_event(
+        "step_start",
+        pid=pid,
+        tid=active_task.id,
+        harness=profile.harness,
+        model=profile.model or "default",
+        message=f"Started step on {active_task.id} via {profile.harness} ({profile.model or 'default'})",
+        meta={"preset": profile.permission_preset.value, "effort": profile.effort},
+    )
+
     async def _handle_event(event: HarnessEvent) -> None:
+        nonlocal tool_count
         line = format_event_log_line(event)
         if line:
             print(f"[{pid} | {profile.harness}] {line}")
             _append_output_log(output_log_path, line)
+
+        if event.type == "text_delta" and event.text_delta:
+            text_buf.append(event.text_delta)
+            _flush_text_buf(force=False)
+        else:
+            _flush_text_buf(force=True)
+            if event.type == "tool":
+                if (event.tool_state or "ACTIVE").upper() == "ACTIVE":
+                    tool_count += 1
+                tool_summary = ""
+                if isinstance(event.tool_info, dict):
+                    tool_summary = str(event.tool_info.get("summary") or "").strip()
+                update_worker_activity(pid, last_tool=tool_summary or (event.raw_tool_name or ""), tool_count=tool_count)
+                publish_event(
+                    "tool",
+                    pid=pid,
+                    tid=active_task.id,
+                    harness=profile.harness,
+                    model=profile.model or "default",
+                    message=line or "",
+                    meta={
+                        "tool": event.canonical_tool.value if event.canonical_tool else (event.raw_tool_name or "tool"),
+                        "state": (event.tool_state or "ACTIVE").upper(),
+                        "summary": tool_summary,
+                        "duration": event.duration_seconds,
+                    },
+                )
+
         if notifier is not None and tracker is not None:
             await notifier.on_event(tracker, event)
         if on_event is not None:
@@ -123,6 +198,7 @@ async def execute_ai_task_async(
             if inspect.isawaitable(maybe):
                 await maybe
 
+    outcome: Optional[StepResult] = None
     try:
         request = RunRequest(
             prompt=_build_worker_prompt(pid, active_task, system_prompt),
@@ -184,6 +260,7 @@ async def execute_ai_task_async(
                         tool_events=result.tool_events,
                         output_lines=result.output_lines,
                     )
+                    outcome = failed_res
                     if notifier is not None and tracker is not None:
                         await notifier.finish_step(tracker, failed_res, task_after=load_task(pid, active_task.id))
                     return failed_res
@@ -204,6 +281,7 @@ async def execute_ai_task_async(
 
             print(f"[{pid}] AI Worker step finished successfully via {result.harness}.")
             state.reset_success()
+            outcome = result
             if notifier is not None and tracker is not None:
                 await notifier.finish_step(tracker, result, task_after=reloaded)
             return result
@@ -233,6 +311,7 @@ async def execute_ai_task_async(
                         f"Switched fallback to {new_harness}/{new_model}.",
                         result.output_lines,
                     )
+            outcome = result
             if notifier is not None and tracker is not None:
                 await notifier.finish_step(tracker, result, task_after=load_task(pid, active_task.id))
             return result
@@ -243,6 +322,7 @@ async def execute_ai_task_async(
             if tracker is not None:
                 tracker.stopped = True
             fail_active_tasks(pid, err_msg, [], send_alert=(notifier is None))
+            outcome = result
             if notifier is not None and tracker is not None:
                 await notifier.finish_step(tracker, result, task_after=load_task(pid, active_task.id))
             return result
@@ -250,6 +330,7 @@ async def execute_ai_task_async(
         err_msg = result.error_message or f"Execution Failed ({result.error_category.value}): {result.status}"
         print(f"[{pid}] AI Worker step failed ({result.error_category.value}): {err_msg}")
         fail_active_tasks(pid, err_msg, result.output_lines, send_alert=(notifier is None))
+        outcome = result
         if notifier is not None and tracker is not None:
             await notifier.finish_step(tracker, result, task_after=load_task(pid, active_task.id))
         return result
@@ -267,6 +348,7 @@ async def execute_ai_task_async(
             error_category=ErrorCategory.CANCELLED,
             error_message=err_msg,
         )
+        outcome = cancel_res
         if notifier is not None and tracker is not None:
             await notifier.finish_step(tracker, cancel_res, task_after=load_task(pid, active_task.id))
         raise
@@ -283,9 +365,46 @@ async def execute_ai_task_async(
             error_category=ErrorCategory.UNKNOWN,
             error_message=err_msg,
         )
+        outcome = err_res
         if notifier is not None and tracker is not None:
             await notifier.finish_step(tracker, err_res, task_after=load_task(pid, active_task.id))
         return err_res
+
+    finally:
+        _flush_text_buf(force=True)
+        mark_worker_finished(pid)
+        task_after = load_task(pid, active_task.id) or load_task(pid, f"{pid}-0")
+        ok = bool(outcome and outcome.success)
+        status_str = outcome.status if outcome else "UNKNOWN"
+        tok = outcome.usage.total_tokens if (outcome and outcome.usage) else 0
+        dur = round(float(outcome.duration_seconds), 2) if outcome else 0.0
+        publish_event(
+            "step_finish",
+            pid=pid,
+            tid=active_task.id,
+            harness=profile.harness,
+            model=profile.model or "default",
+            message=(
+                f"Step completed ({dur}s, {tok:,} tokens)"
+                if ok
+                else f"Step ended: {status_str}"
+            ),
+            meta={
+                "success": ok,
+                "status": status_str,
+                "error_category": outcome.error_category.value if outcome else "unknown",
+                "duration_seconds": dur,
+                "total_tokens": tok,
+                "task_status": task_after.status if task_after else "",
+                "task_assignee": task_after.assignee if task_after else "",
+            },
+        )
+        publish_event(
+            "board_change",
+            pid=pid,
+            tid=active_task.id,
+            message=f"Updated {active_task.id}",
+        )
 
 
 def execute_ai_task(
