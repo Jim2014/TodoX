@@ -1,0 +1,78 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate frontend JavaScript syntax
+        run: node --check web/static/app.js
+
+      - name: Run unittest suite
+        run: |
+          python -m unittest \
+            tests/test_harness_types.py \
+            tests/test_agy_harness.py \
+            tests/test_harness_router_and_state.py \
+            tests/test_worker_and_validation.py \
+            tests/test_telegram_client_and_formatter.py \
+            tests/test_telegram_bot_and_notifier.py \
+            tests/test_async_watcher.py \
+            tests/test_web_kanban_and_sse.py \
+            tests/test_voice_briefing_and_chat.py -v
+
+      - name: Run standalone module self-tests and syntax check
+        run: |
+          for mod in \
+            harness.types \
+            harness.base \
+            harness.agy_harness \
+            harness.registry \
+            harness.router \
+            telegram_ui.client \
+            telegram_ui.formatter \
+            telegram_ui.file_renderers \
+            telegram_ui.keyboards \
+            telegram_ui.notifier \
+            telegram_ui.bot \
+            orchestrator.state \
+            orchestrator.storage \
+            orchestrator.event_bus \
+            orchestrator.voice \
+            orchestrator.briefing \
+            orchestrator.chat_router \
+            orchestrator.worker \
+            orchestrator.watcher \
+            web.models \
+            web.api \
+            web.views \
+            web.app; do
+            echo "=== $mod ==="
+            python -m "$mod"
+          done
+          python orchestrator/test_bot_fix.py
+          python -m py_compile todox_main.py
