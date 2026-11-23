@@ -77,6 +77,8 @@ class TestWebKanbanAndSSE(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._prev_data_dir = os.environ.get("DATA_DIR")
+        self._prev_tg_token = os.environ.pop("TG_TOKEN", None)
+        self._prev_admin_chat = os.environ.pop("ADMIN_CHAT_ID", None)
         os.environ["DATA_DIR"] = self._tmpdir.name
         self.test_state = SystemState(state_file=os.path.join(self._tmpdir.name, "system_state.json"))
         self.client = TestClient(app)
@@ -86,6 +88,14 @@ class TestWebKanbanAndSSE(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("DATA_DIR", None)
         else:
             os.environ["DATA_DIR"] = self._prev_data_dir
+        if self._prev_tg_token is not None:
+            os.environ["TG_TOKEN"] = self._prev_tg_token
+        else:
+            os.environ.pop("TG_TOKEN", None)
+        if self._prev_admin_chat is not None:
+            os.environ["ADMIN_CHAT_ID"] = self._prev_admin_chat
+        else:
+            os.environ.pop("ADMIN_CHAT_ID", None)
         self._tmpdir.cleanup()
 
     def test_event_bus_lifecycle_and_control_queue(self):

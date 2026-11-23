@@ -382,7 +382,7 @@ All unit suites, guardrails tests, and offline evals use isolated temporary `DAT
 # 1. Validate frontend JS syntax
 node --check web/static/app.js
 
-# 2. Run all 11 isolated unittest suites (54 tests)
+# 2. Run all 11 isolated unittest suites (55 tests)
 conda run -n todox python -m unittest \
   tests/test_harness_types.py \
   tests/test_agy_harness.py \

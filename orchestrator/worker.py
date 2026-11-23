@@ -6,6 +6,7 @@ import asyncio
 import html
 import inspect
 import os
+import sys
 import tempfile
 import time
 from datetime import datetime
@@ -492,9 +493,20 @@ def execute_ai_task(
 
 def send_telegram_alert(pid: str, text: str, summary_lines: List[str]) -> None:
     """Send fallback synchronous alert and HTML log tail to ADMIN_CHAT_ID when notifier is absent."""
-    tg_token = os.environ.get("TG_TOKEN")
-    admin_chat_id = os.environ.get("ADMIN_CHAT_ID")
+    if os.environ.get("TODOX_DISABLE_LIVE_ALERTS", "").strip().lower() in ("1", "true", "yes", "on"):
+        return
+    if os.environ.get("TODOX_DEMO_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
+        return
+    if ("unittest" in sys.modules or "pytest" in sys.modules) and (
+        os.environ.get("TODOX_ALLOW_TEST_LIVE_ALERTS", "").strip() != "1"
+    ):
+        return
+
+    tg_token = (os.environ.get("TG_TOKEN") or "").strip()
+    admin_chat_id = (os.environ.get("ADMIN_CHAT_ID") or "").strip()
     if not (tg_token and admin_chat_id):
+        return
+    if tg_token.lower() in ("your_telegram_bot_token_here", "placeholder", "none"):
         return
 
     try:

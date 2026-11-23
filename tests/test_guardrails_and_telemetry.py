@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -24,6 +25,7 @@ from orchestrator.guardrails import (
 from orchestrator.models import ExecutionMeta, HarnessConfig, Task
 from orchestrator.state import SystemState
 from orchestrator.storage import create_project, create_task, get_default_worker_prompt, load_task, save_task
+import orchestrator.worker as worker_module
 from orchestrator.worker import execute_ai_task_async
 from web.app import app
 
@@ -71,6 +73,8 @@ class TestGuardrailsAndTelemetry(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._prev_data_dir = os.environ.get("DATA_DIR")
+        self._prev_tg_token = os.environ.pop("TG_TOKEN", None)
+        self._prev_admin_chat = os.environ.pop("ADMIN_CHAT_ID", None)
         os.environ["DATA_DIR"] = self._tmpdir.name
         self.state = SystemState(state_file=os.path.join(self._tmpdir.name, "system_state.json"))
 
@@ -79,6 +83,14 @@ class TestGuardrailsAndTelemetry(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("DATA_DIR", None)
         else:
             os.environ["DATA_DIR"] = self._prev_data_dir
+        if self._prev_tg_token is not None:
+            os.environ["TG_TOKEN"] = self._prev_tg_token
+        else:
+            os.environ.pop("TG_TOKEN", None)
+        if self._prev_admin_chat is not None:
+            os.environ["ADMIN_CHAT_ID"] = self._prev_admin_chat
+        else:
+            os.environ.pop("ADMIN_CHAT_ID", None)
         self._tmpdir.cleanup()
 
     async def test_guardrail_step_token_and_consecutive_failure_breakers(self):
@@ -95,44 +107,53 @@ class TestGuardrailsAndTelemetry(unittest.IsolatedAsyncioTestCase):
         router = HarnessRouter(registry=reg, state_manager=self.state)
 
         # 1. Step limit tripped BEFORE invoking harness
-        res = await execute_ai_task_async("SAFE", router=router)
-        self.assertIsNotNone(res)
-        self.assertFalse(res.success)
-        self.assertEqual(res.status, "GUARDRAIL_BLOCKED")
-        self.assertEqual(stub.calls, 0)
-        reloaded = load_task("SAFE", "SAFE-1")
-        self.assertEqual(reloaded.status, "blocked")
-        self.assertEqual(reloaded.assignee, "Admin")
-        self.assertEqual(reloaded.comments[-1].author, "System (Guardrail)")
+        with patch.object(worker_module, "send_telegram_alert") as mock_alert:
+            res = await execute_ai_task_async("SAFE", router=router)
+            self.assertIsNotNone(res)
+            self.assertFalse(res.success)
+            self.assertEqual(res.status, "GUARDRAIL_BLOCKED")
+            self.assertEqual(stub.calls, 0)
+            reloaded = load_task("SAFE", "SAFE-1")
+            self.assertEqual(reloaded.status, "blocked")
+            self.assertEqual(reloaded.assignee, "Admin")
+            self.assertEqual(reloaded.comments[-1].author, "System (Guardrail)")
 
-        # 2. Consecutive failure circuit-breaker
-        t2 = create_task("SAFE", "SAFE-0", "Flaky Task", "Crash loop", assignee="AI", status="in_progress")
-        assert t2 is not None
-        t2.harness_config = HarnessConfig(max_steps=10, max_tokens=50000)
-        t2.execution_meta = ExecutionMeta(total_steps=1, total_tokens=100, consecutive_failures=3)
-        save_task("SAFE", t2)
-        t1.status = "complete"
-        save_task("SAFE", t1)
+            # 2. Consecutive failure circuit-breaker
+            t2 = create_task("SAFE", "SAFE-0", "Flaky Task", "Crash loop", assignee="AI", status="in_progress")
+            assert t2 is not None
+            t2.harness_config = HarnessConfig(max_steps=10, max_tokens=50000)
+            t2.execution_meta = ExecutionMeta(total_steps=1, total_tokens=100, consecutive_failures=3)
+            save_task("SAFE", t2)
+            t1.status = "complete"
+            save_task("SAFE", t1)
 
-        self.assertIn("circuit-breaker", check_task_guardrails(load_task("SAFE", "SAFE-0"), t2) or "")
-        res2 = await execute_ai_task_async("SAFE", router=router)
-        self.assertEqual(res2.status, "GUARDRAIL_BLOCKED")
-        self.assertEqual(stub.calls, 0)
+            self.assertIn("circuit-breaker", check_task_guardrails(load_task("SAFE", "SAFE-0"), t2) or "")
+            res2 = await execute_ai_task_async("SAFE", router=router)
+            self.assertEqual(res2.status, "GUARDRAIL_BLOCKED")
+            self.assertEqual(stub.calls, 0)
+            self.assertEqual(mock_alert.call_count, 2)
 
-        # 3. Normal execution increments steps/tokens, resets consecutive_failures, and appends trace span
-        t2.status = "in_progress"
-        t2.assignee = "AI"
-        t2.execution_meta.consecutive_failures = 0
-        save_task("SAFE", t2)
-        res3 = await execute_ai_task_async("SAFE", router=router)
-        self.assertTrue(res3.success)
-        self.assertEqual(stub.calls, 1)
-        t2_after = load_task("SAFE", "SAFE-2")
-        self.assertEqual(t2_after.execution_meta.total_steps, 2)
-        self.assertEqual(t2_after.execution_meta.total_tokens, 250)
+            # 3. Normal execution increments steps/tokens, resets consecutive_failures, and appends trace span
+            t2.status = "in_progress"
+            t2.assignee = "AI"
+            t2.execution_meta.consecutive_failures = 0
+            save_task("SAFE", t2)
+            res3 = await execute_ai_task_async("SAFE", router=router)
+            self.assertTrue(res3.success)
+            self.assertEqual(stub.calls, 1)
+            t2_after = load_task("SAFE", "SAFE-2")
+            self.assertEqual(t2_after.execution_meta.total_steps, 2)
+            self.assertEqual(t2_after.execution_meta.total_tokens, 250)
 
         traces = read_recent_traces(pid="SAFE")
         self.assertEqual([tr["status"] for tr in traces], ["GUARDRAIL_BLOCKED", "GUARDRAIL_BLOCKED", "SUCCESS"])
+
+    def test_send_telegram_alert_blocked_during_unittest(self):
+        os.environ["TG_TOKEN"] = "123456:DUMMY_TOKEN_SHOULD_NOT_SEND"
+        os.environ["ADMIN_CHAT_ID"] = "999999"
+        with patch.object(worker_module.httpx, "post") as mock_post:
+            worker_module.send_telegram_alert("SAFE", "Should be suppressed in unittest", [])
+            mock_post.assert_not_called()
 
     def test_web_telemetry_api_and_harness_budget_update(self):
         create_project("OBS", "Telemetry API", "Observe runs", get_default_worker_prompt())
