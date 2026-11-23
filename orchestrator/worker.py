@@ -25,6 +25,7 @@ from .event_bus import (
     publish_event,
     update_worker_activity,
 )
+from .guardrails import append_trace_span, check_task_guardrails
 from .models import Comment, ExecutionMeta, Task
 from .state import state
 from .storage import (
@@ -117,6 +118,44 @@ async def execute_ai_task_async(
         session_id = active_task.execution_meta.session_id
 
     snapshot = snapshot_project_json_files(pid)
+    breach = check_task_guardrails(project_task, active_task)
+    if breach:
+        print(f"[{pid}] {breach}")
+        target_to_block = load_task(pid, active_task.id) or active_task
+        target_to_block.status = "blocked"
+        target_to_block.assignee = "Admin"
+        target_to_block.comments.append(
+            Comment(author="System (Guardrail)", time=datetime.now().isoformat(), content=breach)
+        )
+        save_task(pid, target_to_block)
+        blocked_res = StepResult(
+            success=False,
+            harness=profile.harness,
+            model=profile.model,
+            status="GUARDRAIL_BLOCKED",
+            error_category=ErrorCategory.UNKNOWN,
+            error_message=breach,
+        )
+        append_trace_span(
+            pid=pid,
+            tid=active_task.id,
+            harness=profile.harness,
+            model=profile.model or "default",
+            status="GUARDRAIL_BLOCKED",
+            error_category="guardrail",
+            duration_seconds=0.0,
+            total_tokens=0,
+            tool_count=0,
+            note=breach,
+        )
+        publish_event("board_change", pid=pid, tid=active_task.id, message=breach)
+        if notifier is not None:
+            tracker = await notifier.start_step(pid, active_task.id, profile)
+            await notifier.finish_step(tracker, blocked_res, task_after=target_to_block)
+        else:
+            send_telegram_alert(pid, f"🛑 [TodoX] {breach}", [])
+        return blocked_res
+
     tracker = await notifier.start_step(pid, active_task.id, profile) if notifier is not None else None
 
     tool_count = 0
@@ -277,6 +316,7 @@ async def execute_ai_task_async(
                 meta.total_tokens += result.usage.total_tokens if result.usage else 0
                 meta.total_duration_seconds += float(result.duration_seconds or 0.0)
                 meta.last_run_at = datetime.now().isoformat()
+                meta.consecutive_failures = 0
                 reloaded.execution_meta = meta
                 save_task(pid, reloaded)
 
@@ -341,6 +381,15 @@ async def execute_ai_task_async(
 
         err_msg = result.error_message or f"Execution Failed ({result.error_category.value}): {result.status}"
         print(f"[{pid}] AI Worker step failed ({result.error_category.value}): {err_msg}")
+        failed_task = load_task(pid, active_task.id)
+        if failed_task is not None:
+            fmeta = failed_task.execution_meta or ExecutionMeta()
+            fmeta.consecutive_failures = int(fmeta.consecutive_failures or 0) + 1
+            fmeta.last_harness = result.harness
+            fmeta.last_model = result.model
+            fmeta.last_run_at = datetime.now().isoformat()
+            failed_task.execution_meta = fmeta
+            save_task(pid, failed_task)
         fail_active_tasks(pid, err_msg, result.output_lines, send_alert=(notifier is None))
         outcome = result
         if notifier is not None and tracker is not None:
@@ -390,6 +439,19 @@ async def execute_ai_task_async(
         status_str = outcome.status if outcome else "UNKNOWN"
         tok = outcome.usage.total_tokens if (outcome and outcome.usage) else 0
         dur = round(float(outcome.duration_seconds), 2) if outcome else 0.0
+        err_cat = outcome.error_category.value if outcome else "unknown"
+        append_trace_span(
+            pid=pid,
+            tid=active_task.id,
+            harness=profile.harness,
+            model=profile.model or "default",
+            status=status_str,
+            error_category=err_cat,
+            duration_seconds=dur,
+            total_tokens=tok,
+            tool_count=tool_count,
+            note=outcome.error_message if (outcome and outcome.error_message) else "",
+        )
         publish_event(
             "step_finish",
             pid=pid,

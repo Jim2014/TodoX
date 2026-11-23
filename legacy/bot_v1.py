@@ -12,13 +12,13 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
 
-from .storage import (
+from orchestrator.storage import (
     load_projects, load_task, save_task, create_project,
     delete_project, update_project, create_task, delete_task,
     update_task, add_comment, delete_comment, update_comment,
     get_data_dir, get_default_worker_prompt,
 )
-from .models import Comment
+from orchestrator.models import Comment
 from harness import HarnessProfile, HarnessRouter, RunRequest, create_default_registry, format_event_log_line
 
 load_dotenv()
@@ -209,7 +209,7 @@ async def handle_get_project(update: Update, args: dict):
         return
         
     try:
-        from .html_generator import generate_project_html
+        from orchestrator.html_generator import generate_project_html
         from datetime import datetime
         html_bytes = generate_project_html(pid)
         if html_bytes:
@@ -249,7 +249,7 @@ async def handle_get_file(update: Update, args: dict):
     if os.path.exists(file_path):
         if path.lower().endswith(".md"):
             try:
-                from .html_generator import generate_markdown_viewer_html
+                from orchestrator.html_generator import generate_markdown_viewer_html
                 
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
@@ -437,7 +437,7 @@ async def handle_multi_line_commands(update: Update, context: ContextTypes.DEFAU
             await update.message.reply_text(f"Unknown command: {cmd}")
 
 # Legacy sys commands remaining attached to context for ease
-from .state import state
+from orchestrator.state import state
 
 async def sys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = state.get_state()

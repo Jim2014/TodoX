@@ -8,6 +8,8 @@ from .agy_harness import (
     resolve_default_agy_bin,
 )
 from .base import BaseHarness, DEFAULT_STREAM_LIMIT_BYTES
+from .claude_harness import ClaudeCodeHarness, DEFAULT_CLAUDE_MODELS, resolve_default_claude_bin
+from .mock_harness import DEFAULT_MOCK_MODELS, MockHarness
 from .registry import HarnessRegistry, create_default_registry
 from .router import HarnessRouter, StepResult, format_event_log_line
 from .types import (
@@ -30,7 +32,10 @@ __all__ = [
     "AgyHarness",
     "BaseHarness",
     "CanonicalTool",
+    "ClaudeCodeHarness",
     "DEFAULT_AGY_MODELS",
+    "DEFAULT_CLAUDE_MODELS",
+    "DEFAULT_MOCK_MODELS",
     "DEFAULT_STREAM_LIMIT_BYTES",
     "ErrorCategory",
     "HarnessCapabilities",
@@ -39,6 +44,7 @@ __all__ = [
     "HarnessRegistry",
     "HarnessRouter",
     "HealthStatus",
+    "MockHarness",
     "ModelInfo",
     "PermissionPreset",
     "RunRequest",
@@ -52,4 +58,5 @@ __all__ = [
     "parse_agy_models",
     "parse_permission_preset",
     "resolve_default_agy_bin",
+    "resolve_default_claude_bin",
 ]

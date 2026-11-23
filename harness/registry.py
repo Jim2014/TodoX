@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, Dict, List
+import os
+from typing import Callable, Dict, List, Optional
 
 from .agy_harness import AgyHarness
 from .base import BaseHarness
+from .claude_harness import ClaudeCodeHarness
+from .mock_harness import MockHarness
 from .types import HealthStatus
 
 HarnessFactory = Callable[..., BaseHarness]
@@ -66,10 +69,14 @@ class HarnessRegistry:
         return [name for name, status in statuses.items() if status.available]
 
 
-def create_default_registry() -> HarnessRegistry:
+def create_default_registry(include_mock: Optional[bool] = None) -> HarnessRegistry:
     """Create the default TodoX harness registry with built-in adapters."""
     registry = HarnessRegistry()
     registry.register("agy", AgyHarness)
+    registry.register("claude", ClaudeCodeHarness)
+    demo_env = os.environ.get("TODOX_DEMO_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+    if include_mock is True or (include_mock is None and demo_env):
+        registry.register("mock", MockHarness)
     return registry
 
 

@@ -605,6 +605,15 @@
       `<button type="button" class="btn btn-sm btn-ghost" data-action="open-task" data-tid="${escapeHtml(proj.id)}">Root / Harness</button>` +
       `</div>` +
       `</div>` +
+      (payload.telemetry
+        ? `<div class="telemetry-strip" style="margin-top:10px;">` +
+          `<span>Steps: <strong>${payload.telemetry.total_steps ?? 0}</strong></span>` +
+          `<span>Tokens: <strong class="mono">${formatTokens(payload.telemetry.total_tokens || 0)}</strong></span>` +
+          `<span>Runtime: <strong>${formatDuration(payload.telemetry.total_duration_seconds || 0)}</strong></span>` +
+          `<span>Success Rate: <strong>${payload.telemetry.success_rate_pct ?? 100}%</strong></span>` +
+          `<span>Guardrails: <code class="mono">${payload.telemetry.limits?.max_steps || "∞"} steps · ${formatTokens(payload.telemetry.limits?.max_tokens || 0)} tok</code></span>` +
+          `</div>`
+        : "") +
       `</section>`;
 
     const tabsHtml =
@@ -769,6 +778,8 @@
         `<label class="field"><span>Session Mode</span><select name="hc_session"><option value="">Inherit</option>` +
         ["stateless", "sticky"].map((m) => `<option value="${m}"${hc.session_mode === m ? " selected" : ""}>${m}</option>`).join("") +
         `</select></label>` +
+        `<label class="field"><span>Max Steps Budget</span><input type="number" min="0" name="hc_max_steps" value="${hc.max_steps ?? ""}" placeholder="Inherit (default 20)"></label>` +
+        `<label class="field"><span>Max Tokens Budget</span><input type="number" min="0" name="hc_max_tokens" value="${hc.max_tokens ?? ""}" placeholder="Inherit (default 250000)"></label>` +
         `</div>` +
         `</details>` +
         `<div style="display:flex;flex-wrap:wrap;gap:8px;">` +
@@ -1374,6 +1385,8 @@
       effort: String(fd.get("hc_effort") || "").trim(),
       permission_preset: String(fd.get("hc_preset") || "").trim(),
       session_mode: String(fd.get("hc_session") || "").trim(),
+      max_steps: String(fd.get("hc_max_steps") || "").trim(),
+      max_tokens: String(fd.get("hc_max_tokens") || "").trim(),
     };
     await apiJson("PUT", `/api/tasks/${encodeURIComponent(appState.pid)}/${encodeURIComponent(tid)}`, {
       title: String(fd.get("title") || ""),

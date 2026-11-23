@@ -43,7 +43,9 @@ jobs:
             tests/test_telegram_bot_and_notifier.py \
             tests/test_async_watcher.py \
             tests/test_web_kanban_and_sse.py \
-            tests/test_voice_briefing_and_chat.py -v
+            tests/test_voice_briefing_and_chat.py \
+            tests/test_multi_harness_and_demo.py \
+            tests/test_guardrails_and_telemetry.py -v
 
       - name: Run standalone module self-tests and syntax check
         run: |
@@ -51,6 +53,8 @@ jobs:
             harness.types \
             harness.base \
             harness.agy_harness \
+            harness.claude_harness \
+            harness.mock_harness \
             harness.registry \
             harness.router \
             telegram_ui.client \
@@ -58,6 +62,10 @@ jobs:
             telegram_ui.file_renderers \
             telegram_ui.keyboards \
             telegram_ui.notifier \
+            telegram_ui.voice_handlers \
+            telegram_ui.commands \
+            telegram_ui.callbacks \
+            telegram_ui.vop \
             telegram_ui.bot \
             orchestrator.state \
             orchestrator.storage \
@@ -65,6 +73,8 @@ jobs:
             orchestrator.voice \
             orchestrator.briefing \
             orchestrator.chat_router \
+            orchestrator.guardrails \
+            orchestrator.demo \
             orchestrator.worker \
             orchestrator.watcher \
             web.models \
@@ -74,5 +84,6 @@ jobs:
             echo "=== $mod ==="
             python -m "$mod"
           done
-          python orchestrator/test_bot_fix.py
+          python -m evals.chat_router_eval
+          python legacy/test_bot_fix.py
           python -m py_compile todox_main.py

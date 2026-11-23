@@ -103,40 +103,76 @@ def _deterministic_fast_path(pid: str, message: str) -> Optional[Dict[str, Any]]
         "brief",
         "briefing",
         "progress",
+        "show status",
+        "project summary",
         "what's the status",
         "whats the status",
         "what is the status",
         "what is the current status",
         "what's the current status",
         "what is the progress",
+        "how is it going",
+        "what changed",
         "\u603b\u7ed3",
         "\u603b\u7ed3\u4e00\u4e0b",
         "\u603b\u7ed3\u4e00\u4e0b\u5f53\u524d\u9879\u76ee",
         "\u603b\u7ed3\u4e00\u4e0b\u5f53\u524d\u9879\u76ee\u8fdb\u5ea6",
         "\u5f53\u524d\u8fdb\u5ea6",
         "\u5f53\u524d\u72b6\u6001",
+        "\u67e5\u770b\u8fdb\u5ea6",
+        "\u6c47\u62a5\u4e00\u4e0b",
+        "\u73b0\u5728\u4ec0\u4e48\u60c5\u51b5",
     ):
         return {"intent": "briefing"}
-    if trimmed in ("ai summary", "refresh summary", "regenerate summary", "ai briefing", "full summary"):
+    if trimmed in (
+        "ai summary",
+        "refresh summary",
+        "refresh ai summary",
+        "generate ai summary",
+        "regenerate summary",
+        "ai briefing",
+        "run ai briefing",
+        "full summary",
+        "\u751f\u6210ai\u603b\u7ed3",
+        "\u5237\u65b0ai\u603b\u7ed3",
+        "\u91cd\u65b0\u603b\u7ed3",
+    ):
         return {"intent": "ai_summary"}
-    if trimmed in ("stop", "stop worker", "cancel", "abort"):
+    if trimmed in ("stop", "stop worker", "cancel", "cancel worker", "abort", "halt worker", "\u505c\u6b62worker", "\u505c\u6b62"):
         return {"intent": "stop"}
-    if trimmed in ("pause", "pause project"):
+    if trimmed in ("pause", "pause project", "pause this project", "pause worker", "\u6682\u505c\u9879\u76ee", "\u6682\u505c"):
         return {"intent": "pause"}
-    if trimmed in ("resume", "resume project"):
+    if trimmed in ("resume", "resume project", "resume this project", "resume work", "\u6062\u590d\u9879\u76ee", "\u6062\u590d"):
         return {"intent": "resume"}
 
-    m_steer = re.match(r"^steer\s+(.+)$", message.strip(), flags=re.IGNORECASE | re.DOTALL)
+    m_steer = re.match(r"^(?:steer|\u7ea0\u504f)\s+(.+)$", message.strip(), flags=re.IGNORECASE | re.DOTALL)
     if m_steer:
         return {"intent": "steer", "comment": m_steer.group(1).strip()}
 
-    m_app = re.match(r"^(?:approve|complete|confirm|done)\s+([A-Za-z][A-Za-z0-9_-]*-\d+)$", trimmed)
+    m_app = re.match(
+        r"^(?:approve|complete|confirm|done|\u6279\u51c6|\u901a\u8fc7|\u786e\u8ba4)\s+([A-Za-z][A-Za-z0-9_-]*-\d+)$",
+        trimmed,
+    )
     if m_app:
         return {"intent": "approve", "tid": m_app.group(1).upper()}
 
-    m_run = re.match(r"^(?:run|start|retry)\s+([A-Za-z][A-Za-z0-9_-]*-\d+)$", trimmed)
+    if trimmed in ("approve", "approve pending", "approve review", "\u6279\u51c6\u5f85\u5ba1\u6838", "\u901a\u8fc7\u5ba1\u6838"):
+        return {"intent": "approve", "tid": ""}
+
+    m_run = re.match(r"^(?:run|start|retry|\u8fd0\u884c|\u91cd\u8bd5)\s+([A-Za-z][A-Za-z0-9_-]*-\d+)$", trimmed)
     if m_run:
         return {"intent": "run_task", "tid": m_run.group(1).upper()}
+
+    m_create = re.match(
+        r"^(?:create(?:\s+a)?\s+(?:task|ticket)(?:\s+(?:to|for))?|add(?:\s+a)?\s+(?:task|ticket)(?:\s+(?:to|for))?|\u65b0\u5efa\u4efb\u52a1|\u521b\u5efa\u4efb\u52a1)\s*[:\uff1a]?\s*(.+)$",
+        message.strip(),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if m_create:
+        raw_spec = m_create.group(1).strip()
+        first_line = raw_spec.splitlines()[0].strip()
+        title = first_line[:69] + "..." if len(first_line) > 72 else first_line
+        return {"intent": "create_and_run", "title": title or "New request", "description": raw_spec}
 
     return None
 

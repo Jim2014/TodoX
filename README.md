@@ -10,6 +10,8 @@ An AI-driven project management and development orchestrator built around persis
 ---
 
 ## Table of Contents
+- [Live Demos](#live-demos)
+- [Zero-Config Demo Quick Start (`--demo`)](#zero-config-demo-quick-start---demo)
 - [Why TodoX?](#why-todox)
 - [Engineering Challenges Solved](#engineering-challenges-solved)
 - [System Architecture & Execution Flow](#system-architecture--execution-flow)
@@ -22,10 +24,44 @@ An AI-driven project management and development orchestrator built around persis
 - [Configuration Guide (`.env`)](#configuration-guide-env)
 - [Usage: Web Kanban UI & Telegram Cockpit](#usage-web-kanban-ui--telegram-cockpit)
 - [Architecture & Module Overview](#architecture--module-overview)
-- [Testing & Verification](#testing--verification)
-- [Maintenance](#maintenance)
+- [Testing & Evals Benchmark](#testing--evals-benchmark)
+- [Maintenance & Roadmap](#maintenance--roadmap)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
+
+## Live Demos
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <strong>5-Column Kanban &amp; Live SSE Stream</strong><br />
+      <sub>Live tool calls &middot; Telemetry &amp; Guardrails &middot; Dark/Light theme</sub><br /><br />
+      <img src="docs/demo_kanban.gif" alt="TodoX 5-column Kanban board and live SSE worker stream demo" width="440" />
+    </td>
+    <td align="center" width="50%">
+      <strong>Project Briefing, Chat/Voice &amp; Offline Previews</strong><br />
+      <sub>Natural-language ticket creation &middot; AI Summary &middot; In-browser HTML preview</sub><br /><br />
+      <img src="docs/demo_briefing_voice.gif" alt="TodoX project briefing, conversational command bar, and offline file preview demo" width="440" />
+    </td>
+  </tr>
+</table>
+
+---
+
+## Zero-Config Demo Quick Start (`--demo`)
+
+Try the full **Web Kanban + Live SSE Stream + Project Briefings + Guardrail Telemetry** locally in under 10 seconds with **zero CLI binaries or Telegram credentials**:
+
+```bash
+git clone https://github.com/Jim2014/TodoX.git
+cd TodoX
+conda env create -f environment.yml && conda activate todox
+python todox_main.py --demo
+```
+
+Then open **`http://localhost:8899`** and inspect **`AUTH`** (`OAuth2 & Session Security`) or **`SEARCH`** (`Hybrid Semantic Search Engine`). Built-in `MockHarness` streams simulated `read`/`edit`/`shell` tool events, live token counts, and Kanban status transitions without spending real API quota.
 
 ---
 
@@ -103,8 +139,9 @@ sequenceDiagram
 
 ## Main Features
 
-- **Pluggable Multi-CLI AI Harness (`harness/`):** Unified `BaseHarness` interface, dynamic `agy models` discovery, typed `ErrorCategory` classification (`rate_limit`, `auth_error`, `timeout`, `binary_not_found`, `cancelled`, etc.), reasoning effort selection (`low`, `medium`, `high`, `xhigh`), permission presets (`auto`, `accept-edits`, `plan`, `turbo`), and live steering.
+- **Pluggable Multi-CLI AI Harness (`harness/`):** Unified `BaseHarness` interface supporting **Google Antigravity CLI (`AgyHarness`)**, **Anthropic Claude Code CLI (`ClaudeCodeHarness`)**, and builtin **`MockHarness`** (`--demo` simulator), with typed `ErrorCategory` classification, reasoning effort selection (`low`, `medium`, `high`, `xhigh`), permission presets (`auto`, `accept-edits`, `plan`, `turbo`), and live steering.
 - **Persistent 9-Field Project & Task Trees (`orchestrator/storage.py`, `orchestrator/models.py`):** Zero-database JSON files stored under `DATA_DIR/projects/<PID>/` with Pydantic validation, execution telemetry (`execution_meta`), atomic writes, and `/fix_data` self-repair.
+- **Loop & Budget Guardrails + Structured Spans (`orchestrator/guardrails.py`):** Per-task/project `max_steps`, `max_tokens`, and `max_consecutive_failures` circuit-breakers block runaway loops before spawning an agent subprocess, while every turn logs an auto-rotated span to `DATA_DIR/traces.jsonl`.
 - **Concurrent `AsyncWatcher` Scheduler (`orchestrator/watcher.py`):** Runs independent projects in parallel up to `MAX_CONCURRENT_WORKERS`, deduplicates active runs with per-project `asyncio.Lock` guards, honors global and per-project pause toggles, and drains `web_control.jsonl` every `0.5s`.
 - **Two-Layer Project Briefings & Multilingual Voice Control (`orchestrator/briefing.py`, `orchestrator/voice.py`, `orchestrator/chat_router.py`):** Instant cached/latest-ticket briefings, read-only `✨ AI Summary` refresh, `faster-whisper` STT, `edge-tts` + `ffmpeg` TTS audio playback, and shared natural-language command execution.
 - **Modern Offline Kanban + Live SSE Web Panel (`web/`):** Multi-project dashboard, drag-and-drop 5-column Kanban board (`Backlog`, `In Progress`, `Needs Review`, `Done`, `Failed`), Project Briefing & Voice Command Bar, Slide-Over Task Inspector with Harness/Model overrides, searchable file explorer with live HTML/Markdown/code preview, and system/light/dark themes.
@@ -231,12 +268,16 @@ Copy [`.env.template`](.env.template) to `.env` and adjust as needed (never comm
 | `MAX_CONCURRENT_WORKERS` | `2` | Maximum number of projects executing concurrently in `AsyncWatcher` |
 | `WEB_ENABLED` | `true` | Enable the FastAPI Kanban & Voice Web UI (`false` disables listening ports) |
 | `WEB_PORT` | `8899` | Port for the local Web dashboard |
-| `DEFAULT_HARNESS` | `agy` | Default CLI harness adapter name |
+| `DEFAULT_HARNESS` | `agy` | Default CLI harness adapter name (`agy`, `claude`, or `mock`) |
 | `AGY_BIN_PATH` | *(auto)* | Optional explicit path to the `agy` binary (`which agy` / common install paths checked automatically) |
+| `CLAUDE_BIN_PATH` | *(auto)* | Optional explicit path to the Claude Code `claude` binary |
 | `DEFAULT_MODEL` | `default` | Default model ID or `"default"` to use harness fallback chain |
 | `DEFAULT_EFFORT` | `high` | Default reasoning effort (`low`, `medium`, `high`, `xhigh`) |
 | `DEFAULT_PERMISSION_PRESET` | `auto` | Default sandbox mode (`auto`, `accept-edits`, `plan`, `turbo`) |
 | `WORKER_TIMEOUT_SECONDS` | `300` | Per-turn execution timeout in seconds |
+| `MAX_STEPS_PER_TASK` | `20` | Loop guardrail budget per task (`0` disables; overridable per project/task) |
+| `MAX_TOKENS_PER_TASK` | `250000` | Token guardrail budget per task (`0` disables; overridable per project/task) |
+| `MAX_CONSECUTIVE_FAILURES` | `3` | Circuit-breaker threshold halting repeated failed turns (`0` disables) |
 | `WHISPER_MODEL_SIZE` | `base` | `faster-whisper` model size (`tiny`, `base`, `small`, `medium`, `large-v3`) |
 | `TTS_VOICE_EN` | `en-US-JennyNeural` | `edge-tts` voice used for English spoken briefings |
 | `TTS_VOICE_ZH` | `zh-CN-XiaoxiaoNeural` | `edge-tts` voice used when CJK text is detected |
@@ -304,37 +345,44 @@ Every Python module is structured to run standalone CLI self-checks via `python 
   - [`harness/types.py`](harness/types.py): Canonical enums (`CanonicalTool`, `ErrorCategory`, `PermissionPreset`), `HarnessProfile`, `HarnessEvent`, `RunRequest`, `StepResult`, `UsageMetrics`.
   - [`harness/base.py`](harness/base.py): Abstract `BaseHarness` contract and error classifier helpers.
   - [`harness/agy_harness.py`](harness/agy_harness.py): `AgyHarness` subprocess lifecycle, 16 MiB NDJSON streaming reader, `agy models` parser, and mid-flight `stdin` steering.
+  - [`harness/claude_harness.py`](harness/claude_harness.py): `ClaudeCodeHarness` adapter for `claude -p --output-format stream-json` with permission mode mapping and token/error extraction.
+  - [`harness/mock_harness.py`](harness/mock_harness.py): `MockHarness` zero-credential simulator for `--demo` mode and offline end-to-end verification.
   - [`harness/registry.py`](harness/registry.py) & [`harness/router.py`](harness/router.py): Harness registry, health checks, and **Task > Project > Global** profile routing + fallback iteration.
 - **`orchestrator/`**
   - [`orchestrator/models.py`](orchestrator/models.py) & [`orchestrator/storage.py`](orchestrator/storage.py): 9-Field Pydantic task schema (`Task`, `Comment`, `ExecutionMeta`, `HarnessConfig`), atomic JSON storage, and validation helpers.
   - [`orchestrator/state.py`](orchestrator/state.py): Global `SystemState` manager, fallback index progression, and backoff intervals.
+  - [`orchestrator/guardrails.py`](orchestrator/guardrails.py): Per-task/project `max_steps`, `max_tokens`, and `max_consecutive_failures` circuit-breakers, `traces.jsonl` span logger, and telemetry aggregator.
+  - [`orchestrator/demo.py`](orchestrator/demo.py): Seed generator for `python todox_main.py --demo`.
   - [`orchestrator/event_bus.py`](orchestrator/event_bus.py): Cross-process `live_events.jsonl` publisher/tailer, worker runtime state, and `web_control.jsonl` queue.
   - [`orchestrator/voice.py`](orchestrator/voice.py): Offline `faster-whisper` transcription, `edge-tts` / macOS `say` + `ffmpeg` OGG/MP3 synthesis, spoken language detection, and briefing distillation.
   - [`orchestrator/briefing.py`](orchestrator/briefing.py): Instant multi-source project briefing builder and read-only AI executive summarization + cache staleness checks.
   - [`orchestrator/chat_router.py`](orchestrator/chat_router.py): Shared conversational intent router for Web and Telegram text/voice commands.
-  - [`orchestrator/worker.py`](orchestrator/worker.py) & [`orchestrator/watcher.py`](orchestrator/watcher.py): Pre-step snapshot + execution + JSON repair/rollback worker runner, `briefing.json` auto-updates, and concurrent `AsyncWatcher` scheduler.
+  - [`orchestrator/worker.py`](orchestrator/worker.py) & [`orchestrator/watcher.py`](orchestrator/watcher.py): Guardrail enforcement, pre-step snapshot + execution + JSON repair/rollback worker runner, `briefing.json` auto-updates, and concurrent `AsyncWatcher` scheduler.
   - [`orchestrator/prompts/default_worker.md`](orchestrator/prompts/default_worker.md): Default autonomous worker system instructions.
 - **`telegram_ui/`**
   - [`telegram_ui/client.py`](telegram_ui/client.py): Async `httpx` Telegram Bot API wrapper with token redaction, `429`/`409` handling, HTML strip fallback, voice download/upload, and unpin helpers.
   - [`telegram_ui/formatter.py`](telegram_ui/formatter.py) & [`telegram_ui/file_renderers.py`](telegram_ui/file_renderers.py): Markdown-to-Telegram-HTML conversion, HTML tag balancer, streaming HTML/protocol masking, and offline mobile HTML viewers.
-  - [`telegram_ui/keyboards.py`](telegram_ui/keyboards.py), [`telegram_ui/notifier.py`](telegram_ui/notifier.py), & [`telegram_ui/bot.py`](telegram_ui/bot.py): Inline keyboard builders, throttled live progress cards, `/use` / `/summary` / voice workflows, and VOP compatibility.
-- **`web/`**
-  - [`web/models.py`](web/models.py), [`web/api.py`](web/api.py), [`web/views.py`](web/views.py), [`web/app.py`](web/app.py), [`web/static/app.js`](web/static/app.js), [`web/static/styles.css`](web/static/styles.css): FastAPI backend, REST + SSE APIs, offline SPA shell, Kanban drag-and-drop UI, briefing & voice command bar, and dark/light CSS.
-- **Documentation & Entrypoints**
-  - [`docs/spec.md`](docs/spec.md): Architectural specification notes.
-  - [`todox_main.py`](todox_main.py): Main asyncio runtime coordinating `AsyncWatcher`, `TodoXTelegramBot`, and Uvicorn Web server.
+  - [`telegram_ui/keyboards.py`](telegram_ui/keyboards.py) & [`telegram_ui/notifier.py`](telegram_ui/notifier.py): Inline keyboard builders and throttled live progress cards.
+  - [`telegram_ui/commands.py`](telegram_ui/commands.py), [`telegram_ui/callbacks.py`](telegram_ui/callbacks.py), [`telegram_ui/voice_handlers.py`](telegram_ui/voice_handlers.py), [`telegram_ui/vop.py`](telegram_ui/vop.py), & [`telegram_ui/bot.py`](telegram_ui/bot.py): Modular mixin composition for slash commands, card/file callbacks, voice STT/TTS routing, and legacy VOP compatibility.
+- **`web/` & `evals/`**
+  - [`web/models.py`](web/models.py), [`web/api.py`](web/api.py), [`web/views.py`](web/views.py), [`web/app.py`](web/app.py), [`web/static/app.js`](web/static/app.js), [`web/static/styles.css`](web/static/styles.css): FastAPI backend, REST + SSE + Telemetry APIs, offline SPA shell, Kanban drag-and-drop UI, briefing & voice command bar, and dark/light CSS.
+  - [`evals/chat_router_eval.py`](evals/chat_router_eval.py): 30-case multilingual conversational intent benchmark achieving **30/30 (100.0%)** offline accuracy across `briefing`, `ai_summary`, `create_and_run`, `comment_and_run`, `approve`, `run_task`, `steer`, `stop`, `pause`, and `resume`.
+- **Documentation, Legacy Archive & Entrypoints**
+  - [`docs/spec.md`](docs/spec.md) & [`ROADMAP.md`](ROADMAP.md): Architectural specification notes and multi-phase engineering roadmap.
+  - [`legacy/`](legacy/README.md): Archived superseded v1 helper scripts kept cleanly separated from active code.
+  - [`todox_main.py`](todox_main.py): Main asyncio runtime supporting production mode and `--demo` zero-config simulator.
 
 ---
 
-## Testing & Verification
+## Testing & Evals Benchmark
 
-All unit and integration suites use isolated temporary `DATA_DIR` directories, mocked harnesses, and `httpx` / FastAPI test clients—requiring zero live Telegram tokens or LLM API calls. Tests run automatically in CI via [`.github/workflows/test.yml`](.github/workflows/test.yml).
+All unit suites, guardrails tests, and offline evals use isolated temporary `DATA_DIR` directories, mocked harnesses, and `httpx` / FastAPI test clients—requiring zero live Telegram tokens or LLM API calls. CI runs automatically on every push and PR via [`.github/workflows/test.yml`](.github/workflows/test.yml).
 
 ```bash
 # 1. Validate frontend JS syntax
 node --check web/static/app.js
 
-# 2. Run all 9 isolated unittest suites (49 tests)
+# 2. Run all 11 isolated unittest suites (54 tests)
 conda run -n todox python -m unittest \
   tests/test_harness_types.py \
   tests/test_agy_harness.py \
@@ -344,26 +392,32 @@ conda run -n todox python -m unittest \
   tests/test_telegram_bot_and_notifier.py \
   tests/test_async_watcher.py \
   tests/test_web_kanban_and_sse.py \
-  tests/test_voice_briefing_and_chat.py -v
+  tests/test_voice_briefing_and_chat.py \
+  tests/test_multi_harness_and_demo.py \
+  tests/test_guardrails_and_telemetry.py -v
 
 # 3. Run standalone module self-tests & syntax check
 for mod in \
-  harness.types harness.base harness.agy_harness harness.registry harness.router \
-  telegram_ui.client telegram_ui.formatter telegram_ui.file_renderers telegram_ui.keyboards telegram_ui.notifier telegram_ui.bot \
-  orchestrator.state orchestrator.storage orchestrator.event_bus orchestrator.voice orchestrator.briefing orchestrator.chat_router orchestrator.worker orchestrator.watcher \
+  harness.types harness.base harness.agy_harness harness.claude_harness harness.mock_harness harness.registry harness.router \
+  telegram_ui.client telegram_ui.formatter telegram_ui.file_renderers telegram_ui.keyboards telegram_ui.notifier telegram_ui.voice_handlers telegram_ui.commands telegram_ui.callbacks telegram_ui.vop telegram_ui.bot \
+  orchestrator.state orchestrator.storage orchestrator.event_bus orchestrator.voice orchestrator.briefing orchestrator.chat_router orchestrator.guardrails orchestrator.demo orchestrator.worker orchestrator.watcher \
   web.models web.api web.views web.app; do
   conda run -n todox python -m "$mod"
 done
-conda run -n todox python orchestrator/test_bot_fix.py
+
+# 4. Run 30-case conversational intent routing evals & syntax checks
+conda run -n todox python -m evals.chat_router_eval
+conda run -n todox python legacy/test_bot_fix.py
 conda run -n todox python -m py_compile todox_main.py
 ```
 
 ---
 
-## Maintenance
+## Maintenance & Roadmap
 
 - **Automated Restart:** Trigger `/restart` in Telegram or execute [`restart.sh`](restart.sh) / [`restart.bat`](restart.bat).
-- **Logs:** Orchestrator worker transcripts write to `DATA_DIR/latest_worker_output.log`, while daemon stdout/stderr redirects to `todox_run.log` (gitignored).
+- **Telemetry & Logs:** Structured execution spans log to `DATA_DIR/traces.jsonl`, worker transcripts write to `DATA_DIR/latest_worker_output.log`, and daemon stdout/stderr redirects to `todox_run.log` (gitignored).
+- **Roadmap:** See [`ROADMAP.md`](ROADMAP.md) for completed milestones and upcoming deliverables.
 
 ---
 

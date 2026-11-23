@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import os
 import signal
 import sys
+import tempfile
 from datetime import datetime
 from typing import Optional
 
@@ -19,6 +21,7 @@ if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
 from harness import HarnessRouter, create_default_registry
+from orchestrator.demo import seed_demo_workspace
 from orchestrator.state import state
 from orchestrator.watcher import AsyncWatcher
 from telegram_ui import TelegramClient, TodoXTelegramBot, WorkerNotifier, parse_allowed_chat_ids
@@ -32,7 +35,31 @@ def _env_bool(name: str, default: bool = True) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
-async def async_main() -> None:
+def _configure_demo_environment(data_dir: Optional[str] = None, port: Optional[int] = None) -> str:
+    """Configure isolated zero-credential demo workspace and MockHarness defaults."""
+    demo_dir = os.path.abspath(data_dir) if data_dir else tempfile.mkdtemp(prefix="todox_demo_")
+    os.makedirs(demo_dir, exist_ok=True)
+    os.environ["DATA_DIR"] = demo_dir
+    os.environ["TODOX_DEMO_MODE"] = "1"
+    os.environ["TG_TOKEN"] = ""
+    os.environ["WEB_ENABLED"] = "true"
+    os.environ["DEFAULT_HARNESS"] = "mock"
+    os.environ["DEFAULT_MODEL"] = "mock-agent-v1"
+    if port is not None:
+        os.environ["WEB_PORT"] = str(int(port))
+
+    state._state_file = os.path.join(demo_dir, "system_state.json")
+    state._load()
+    if not os.path.isdir(os.path.join(demo_dir, "projects", "AUTH")):
+        seed_demo_workspace(demo_dir)
+    return demo_dir
+
+
+async def async_main(
+    demo: bool = False,
+    port: Optional[int] = None,
+    data_dir: Optional[str] = None,
+) -> None:
     """Initialize services and run AsyncWatcher + TodoXTelegramBot concurrently."""
     load_dotenv()
     logging.basicConfig(
@@ -41,20 +68,36 @@ async def async_main() -> None:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    state.reset_model()
+
+    if demo:
+        demo_dir = _configure_demo_environment(data_dir=data_dir, port=port)
+        state.reset_model()
+        state.set_harness("mock", "mock-agent-v1")
+    else:
+        demo_dir = ""
+        if data_dir:
+            abs_dir = os.path.abspath(data_dir)
+            os.environ["DATA_DIR"] = abs_dir
+            state._state_file = os.path.join(abs_dir, "system_state.json")
+            state._load()
+        if port is not None:
+            os.environ["WEB_PORT"] = str(int(port))
+        state.reset_model()
 
     start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     state.set_start_time(start_time_str)
 
     print("--------------------------------------------------")
     print(f"TodoX Orchestrator System Starting at {start_time_str}...")
+    if demo:
+        print(f"DEMO MODE active (zero credentials, MockHarness simulator, workspace={demo_dir})")
     print("--------------------------------------------------")
 
     web_process: Optional[object] = None
     if _env_bool("WEB_ENABLED", True):
         web_process = run_web()
         web_port = os.environ.get("WEB_PORT", "8899")
-        print(f"Web UI Dashboard running on port {web_port}...")
+        print(f"Web UI Dashboard running on http://localhost:{web_port} ...")
     else:
         print("Web UI Dashboard disabled (WEB_ENABLED=false).")
 
@@ -130,8 +173,13 @@ async def async_main() -> None:
 
 def main() -> None:
     """Synchronous entrypoint for todox_main.py."""
+    parser = argparse.ArgumentParser(description="TodoX Autonomous AI Project & Task Orchestrator")
+    parser.add_argument("--demo", action="store_true", help="Launch zero-config Web Kanban demo with MockHarness")
+    parser.add_argument("--port", type=int, default=None, help="Override WEB_PORT (default 8899)")
+    parser.add_argument("--data-dir", type=str, default=None, help="Override DATA_DIR path")
+    args = parser.parse_args()
     try:
-        asyncio.run(async_main())
+        asyncio.run(async_main(demo=args.demo, port=args.port, data_dir=args.data_dir))
     except KeyboardInterrupt:
         print("TodoX stopped by keyboard interrupt.")
 

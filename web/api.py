@@ -21,6 +21,7 @@ from orchestrator.event_bus import (
     read_recent_events,
     stream_events_async,
 )
+from orchestrator.guardrails import compute_project_telemetry, read_recent_traces
 from orchestrator.models import HarnessConfig, Task
 from orchestrator.state import state
 from orchestrator.storage import (
@@ -77,6 +78,16 @@ def _apply_harness_config(task: Task, raw_cfg: Optional[Dict[str, Any]]) -> None
         val = raw_cfg.get(key)
         if val is not None and str(val).strip() != "":
             cleaned[key] = str(val).strip()
+
+    for int_key in ("max_steps", "max_tokens"):
+        val = raw_cfg.get(int_key)
+        if val is not None and str(val).strip() != "":
+            try:
+                parsed = int(val)
+                if parsed >= 0:
+                    cleaned[int_key] = parsed
+            except (TypeError, ValueError):
+                pass
 
     task.harness_config = HarnessConfig(**cleaned) if cleaned else None
 
@@ -220,7 +231,23 @@ def api_get_project(pid: str):
         "paused": clean_pid in set(st.get("paused_projects", [])),
         "effective_profile": harness_router.resolve_profile(project_task=root).to_dict(),
         "briefing": build_project_briefing(clean_pid),
+        "telemetry": compute_project_telemetry(clean_pid, subtasks, root),
         "system_state": st,
+    }
+
+
+@router.get("/api/projects/{pid}/traces")
+def api_project_traces(pid: str, limit: int = Query(default=40, ge=1, le=200)):
+    """Return structured execution traces and guardrail telemetry for one project."""
+    clean_pid = pid.strip().upper()
+    root = load_task(clean_pid, f"{clean_pid}-0")
+    if not root:
+        raise HTTPException(status_code=404, detail="Project not found")
+    subtasks = _load_project_subtasks(clean_pid)
+    return {
+        "pid": clean_pid,
+        "telemetry": compute_project_telemetry(clean_pid, subtasks, root),
+        "traces": read_recent_traces(limit=limit, pid=clean_pid),
     }
 
 

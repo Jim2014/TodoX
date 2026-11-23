@@ -53,16 +53,19 @@ class TestHarnessRouterAndState(unittest.IsolatedAsyncioTestCase):
     async def test_registry_operations_and_health(self):
         reg = create_default_registry()
         self.assertTrue(reg.has("agy"))
-        self.assertEqual(reg.list_names(), ["agy"])
+        self.assertTrue(reg.has("claude"))
+        self.assertEqual(reg.list_names(), ["agy", "claude"])
 
         with self.assertRaises(ValueError):
             reg.register("agy", _FakeHarness)
 
         reg.register("fake", lambda **kw: _FakeHarness(available=False, name="fake", **kw))
+        reg.register("claude", lambda **kw: _FakeHarness(available=False, name="claude", **kw), overwrite=True)
         reg.register("agy", lambda **kw: _FakeHarness(available=True, name="agy", **kw), overwrite=True)
 
         health = await reg.check_all_health()
         self.assertTrue(health["agy"].available)
+        self.assertFalse(health["claude"].available)
         self.assertFalse(health["fake"].available)
         self.assertEqual(await reg.list_available(), ["agy"])
 

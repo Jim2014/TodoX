@@ -15,13 +15,15 @@ class Comment(BaseModel):
 
 
 class HarnessConfig(BaseModel):
-    """Optional per-project or per-task harness routing overrides."""
+    """Optional per-project or per-task harness routing and guardrail overrides."""
 
     harness: Optional[str] = None
     model: Optional[str] = None
     effort: Optional[str] = None
     permission_preset: Optional[str] = None
     session_mode: Optional[Literal["stateless", "sticky"]] = None
+    max_steps: Optional[int] = None
+    max_tokens: Optional[int] = None
 
 
 class ExecutionMeta(BaseModel):
@@ -34,6 +36,7 @@ class ExecutionMeta(BaseModel):
     total_tokens: int = 0
     total_duration_seconds: float = 0.0
     last_run_at: Optional[str] = None
+    consecutive_failures: int = 0
 
 
 class Task(BaseModel):

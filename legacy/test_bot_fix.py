@@ -9,8 +9,8 @@ from telegram import Message, Update
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import orchestrator.bot as bot_module
-from orchestrator.bot import handle_fix_data
+import legacy.bot_v1 as bot_module
+from legacy.bot_v1 import handle_fix_data
 
 
 async def run_test():
@@ -26,14 +26,14 @@ async def run_test():
             json.dump({"id": "TESTBOT-1", "title": "Test Task 1"}, f)
 
         # 1. Data dir not found
-        with patch("orchestrator.bot.get_data_dir", return_value=os.path.join(tmpdir, "missing")):
+        with patch("legacy.bot_v1.get_data_dir", return_value=os.path.join(tmpdir, "missing")):
             await handle_fix_data(update, {})
             update.message.reply_text.assert_called_with("Data directory not found.")
 
         update.message.reply_text.reset_mock()
 
         # 2. All JSON valid
-        with patch("orchestrator.bot.get_data_dir", return_value=tmpdir), \
+        with patch("legacy.bot_v1.get_data_dir", return_value=tmpdir), \
              patch.object(bot_module, "run_harness_fix_stream", new_callable=AsyncMock) as mock_exec:
             await handle_fix_data(update, {})
             update.message.reply_text.assert_called_with("✅ All json files in all projects are valid.")
@@ -48,7 +48,7 @@ async def run_test():
         mock_state = MagicMock()
         mock_state.get_current_harness.return_value = "agy"
 
-        with patch("orchestrator.bot.get_data_dir", return_value=tmpdir), \
+        with patch("legacy.bot_v1.get_data_dir", return_value=tmpdir), \
              patch.object(bot_module, "state", mock_state), \
              patch.object(bot_module, "run_harness_fix_stream", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = ["Fixed project.json"]
