@@ -104,7 +104,7 @@ try {{
         </label>
         <label class="field">
           <span>Project Title</span>
-          <input name="title" required placeholder="Silver Mean Reversion Research">
+          <input name="title" required placeholder="OAuth2 & Session Security">
         </label>
         <label class="field">
           <span>Project Goal &amp; Instructions</span>

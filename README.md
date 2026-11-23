@@ -146,7 +146,7 @@ sequenceDiagram
 - **Two-Layer Project Briefings & Multilingual Voice Control (`orchestrator/briefing.py`, `orchestrator/voice.py`, `orchestrator/chat_router.py`):** Instant cached/latest-ticket briefings, read-only `✨ AI Summary` refresh, `faster-whisper` STT, `edge-tts` + `ffmpeg` TTS audio playback, and shared natural-language command execution.
 - **Modern Offline Kanban + Live SSE Web Panel (`web/`):** Multi-project dashboard, drag-and-drop 5-column Kanban board (`Backlog`, `In Progress`, `Needs Review`, `Done`, `Failed`), Project Briefing & Voice Command Bar, Slide-Over Task Inspector with Harness/Model overrides, searchable file explorer with live HTML/Markdown/code preview, and system/light/dark themes.
 - **Mobile-First Async Telegram Cockpit (`telegram_ui/`):** Interactive inline project/task cards, `/use <PID>` persistent chat focus, `/summary` executive briefs, voice note round-trips, reply-to-card Admin comments, standalone offline HTML code/diff/file viewers, deny-by-default chat authorization, and backward-compatible VOP batch commands (`/new-project`, `/new-task`, `/update-task`, `/new-comment`, `/get-project`, `/get-file`, `/fix-data`).
-- **Automated Test Suite:** **49 isolated tests** across 9 test modules plus **23 standalone module self-tests**, enforced automatically on every push and pull request via [GitHub Actions CI](.github/workflows/test.yml).
+- **Automated Test Suite:** **55 isolated tests** across 11 test modules, **31 standalone module self-tests**, and a **30-case multilingual intent eval benchmark**, enforced automatically on every push and pull request via [GitHub Actions CI](.github/workflows/test.yml).
 
 ---
 
@@ -224,7 +224,7 @@ TodoX/
 ├── orchestrator/             # Worker lifecycle, validation, watcher, briefings, voice & chat router
 ├── telegram_ui/              # Async Telegram client, formatters, renderers, keyboards, notifier & bot
 ├── web/                      # FastAPI Kanban dashboard, REST/SSE APIs & offline static assets
-├── tests/                    # Isolated unittest integration suites (49 tests)
+├── tests/                    # Isolated unittest integration suites (55 tests)
 ├── test_data/                # Minimal synthetic fixtures for /fix_data corruption tests
 ├── docs/                     # Architecture & specification notes
 ├── todox_main.py             # Unified async orchestrator + Telegram + Web entrypoint

@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 from fastapi.testclient import TestClient
 
